@@ -1,6 +1,12 @@
 # Pirganj Database
 
-The current managed project uses Drizzle ORM with a MySQL-compatible database. The schema is defined in `drizzle/schema.ts`; it is intentionally accessed through the server rather than directly from the mobile app.
+The final backend uses **Supabase PostgreSQL** through Drizzle ORM and the `pg` driver. The mobile app never connects directly to Supabase. It calls the backend API, and the backend keeps `DATABASE_URL` server-side.
+
+## Setup
+
+Run the complete `supabase/schema.sql` file once in the Supabase SQL Editor. It creates the application enums, tables, indexes, timestamp triggers and starter service categories. The same model is represented in `drizzle/schema.ts` and can be used for future migrations.
+
+For Render, copy the PostgreSQL string from Supabase **Connect** into `DATABASE_URL`. Use the Supabase pooler connection string when Supabase recommends it for external services. Keep SSL enabled with `DATABASE_SSL=true`.
 
 ## Core tables
 
@@ -10,28 +16,29 @@ The current managed project uses Drizzle ORM with a MySQL-compatible database. T
 | `categories` | Admin-managed service categories. |
 | `services` | Public local directory entries and moderation status. |
 | `posts` | Community feed, lost-and-found fields, pin state and moderation status. |
-| `comments` | Post comments and replies through `parentId`. |
+| `comments` | Post comments and replies through `parent_id`. |
 | `reactions` | One reaction per user per post. |
 | `reviews` | One review per user per service and a 1–5 rating value. |
-| `bloodDonors` | Blood group, area, availability and contact data. |
-| `emergencyRequests` | Blood and other urgent requests. |
-| `notificationTokens` | Device token metadata for future FCM delivery. |
+| `blood_donors` | Blood group, area, availability and contact data. |
+| `emergency_requests` | Blood and other urgent requests. |
+| `notification_tokens` | Device token metadata for future FCM delivery. |
 | `notifications` | Global or user-specific notification history. |
 | `reports` | Moderation reports with open, dismissed and resolved states. |
-| `passwordRecoveryRequests` | Recovery workflow metadata without storing old passwords. |
-| `appVersions` | Published APK version, minimum code and force-update policy. |
+| `password_recovery_requests` | Recovery workflow metadata without storing old passwords. |
+| `app_versions` | Published APK version, minimum code and force-update policy. |
 
 ## Important constraints
 
-`users.openId`, `users.phone` and `users.username` are unique. The database uses a case-insensitive collation for normal username uniqueness; the backend should also normalize usernames to lowercase before any future phone/password registration route is enabled. `reactions` enforces one reaction per user per post, `reviews` enforces one review per user per service, and `bloodDonors` enforces one donor profile per user.
+The SQL script enforces case-insensitive username uniqueness, optional phone uniqueness, one reaction per user per post, one review per user per service and one donor profile per user. It also adds foreign keys with safe delete behavior for related content.
 
-The schema stores media references rather than file bytes. Profile, service and post images should be uploaded to object storage after validating type and size, then the resulting URL should be stored in the relevant record.
+The schema stores media references rather than file bytes. Profile, service and post images should be uploaded to Supabase Storage or another object store after validating type and size; only the resulting URL should be stored in the application table.
 
-## Migration state
+## Security
 
-The current managed database was inspected before migration and contained the starter `users` table. The Pirganj tables, profile columns, unique constraints and indexes were then applied. No test rows were inserted through the migration workflow.
+Do not enable broad anonymous write access in Supabase for these tables. The backend should remain the write boundary, with admin and authenticated checks applied in the API. Never put `DATABASE_URL` or a Supabase service-role key inside the mobile app.
 
 ## References
 
-[1]: https://orm.drizzle.team/docs/sql-schema-declaration "Drizzle schema declaration documentation"
-[2]: https://dev.mysql.com/doc/refman/8.0/en/create-table.html "MySQL CREATE TABLE documentation"
+[1]: https://supabase.com/docs/guides/database/connecting-to-postgres "Supabase PostgreSQL connection documentation"
+[2]: https://supabase.com/docs/guides/database/connection-management "Supabase connection management documentation"
+[3]: https://orm.drizzle.team/docs/get-started-postgresql "Drizzle PostgreSQL documentation"

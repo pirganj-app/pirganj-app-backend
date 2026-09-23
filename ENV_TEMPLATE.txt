@@ -1,0 +1,24 @@
+# Copy these variables into Render Environment Variables or a local .env file.
+# Never commit the real values.
+
+NODE_ENV=production
+
+# Supabase Dashboard -> Connect -> Session pooler or Direct connection string
+DATABASE_URL=postgresql://postgres.[PROJECT-REF]:[PASSWORD]@[POOLER-HOST]:5432/postgres
+DATABASE_SSL=true
+DB_POOL_MAX=5
+
+# Existing Manus OAuth settings used by this backend
+JWT_SECRET=generate-a-long-random-secret
+VITE_APP_ID=your-manus-app-id
+OAUTH_SERVER_URL=https://api.manus.im
+OWNER_OPEN_ID=your-owner-open-id
+BUILT_IN_FORGE_API_URL=your-built-in-forge-api-url
+BUILT_IN_FORGE_API_KEY=your-built-in-forge-api-key
+
+# Optional later integrations
+# SUPABASE_URL=https://[PROJECT-REF].supabase.co
+# SUPABASE_SERVICE_ROLE_KEY=server-only-secret-never-put-in-the-app
+# FIREBASE_PROJECT_ID=your-firebase-project-id
+# FIREBASE_CLIENT_EMAIL=your-firebase-service-account-email
+# FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"

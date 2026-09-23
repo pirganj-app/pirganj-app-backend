@@ -1,24 +1,22 @@
 # Pirganj Backend
 
-**Pirganj – আপনার এলাকার তথ্যসেবা**-এর backend foundation এখানে রাখা হয়েছে। এটি Express-এর উপর চলা একটি typed server, যেখানে database schema, public REST API, authentication-aware notification access এবং admin dashboard shell রয়েছে।
+**Pirganj – আপনার এলাকার তথ্যসেবা**-এর Supabase PostgreSQL-ready backend এখানে রাখা হয়েছে। এটি Express, Drizzle ORM এবং the `pg` driver ব্যবহার করে Supabase PostgreSQL-এর সঙ্গে সংযুক্ত হয়। Mobile app কখনো সরাসরি database-এ সংযোগ করে না; সব request server API-এর মাধ্যমে যায়।
 
-## Current public URL
+## Production setup order
 
-Development deployment URL: `https://3000-iyes8mjflpxi9amnci46l-9b6bfd30.us4.manus.computer`
+1. Create a Supabase project.
+2. Run `supabase/schema.sql` once in the Supabase SQL Editor.
+3. Copy the Supabase PostgreSQL connection string from **Connect**.
+4. Add the values from `ENV_TEMPLATE.txt` to Render Environment Variables.
+5. Deploy with the commands in `RENDER_DEPLOY.md`.
+6. Test `https://YOUR-RENDER-SERVICE.onrender.com/api/health`.
+7. Send only the public Render URL to update the mobile app.
 
-The mobile app currently uses the following API base URL:
+## API scope
 
-`https://3000-iyes8mjflpxi9amnci46l-9b6bfd30.us4.manus.computer/api`
+The backend exposes public health, app-version, categories, services, posts, blood donors and emergency request endpoints. Authenticated notifications and the admin dashboard endpoint are protected server-side. The Bengali admin dashboard is included as a management foundation.
 
-This is a sandbox-hosted URL for the current session. A permanent Render deployment requires a Render service and its own environment variables.
-
-## Implemented backend scope
-
-The database schema includes users, categories, services, posts, comments, reactions, reviews, blood donors, emergency requests, notification tokens, notifications, reports, password recovery requests and app versions. The public API exposes health, app version, categories, services, posts, blood donors, emergency requests and authenticated notifications. The admin dashboard endpoint is protected by the server-side admin role.
-
-The server accepts CORS requests for the mobile client and returns simple Bangla error messages for protected endpoints. It does not expose database credentials to the mobile app.
-
-## Local development
+## Local commands
 
 ```bash
 pnpm install
@@ -28,18 +26,20 @@ pnpm build
 pnpm dev
 ```
 
-The database URL is provided through the managed project environment. For a separate deployment, set `DATABASE_URL`, `JWT_SECRET`, `VITE_APP_ID`, `OAUTH_SERVER_URL`, `OWNER_OPEN_ID`, `BUILT_IN_FORGE_API_URL` and `BUILT_IN_FORGE_API_KEY` in the server environment. Do not commit `.env` files.
+## Database files
 
-## Schema changes
+- `drizzle/schema.ts` is the PostgreSQL Drizzle schema used by the application.
+- `supabase/schema.sql` is the one-time SQL script for Supabase SQL Editor.
+- `ENV_TEMPLATE.txt` lists the required environment variables without real secrets.
 
-The TypeScript schema lives in `drizzle/schema.ts`. Generate migrations with `pnpm drizzle-kit generate`, review the generated SQL, and apply the reviewed SQL to the target database. The current managed database contains the Pirganj tables and indexes described in [DATABASE.md](./DATABASE.md).
+## Security
 
-## Deployment note
+Never upload `.env`, Supabase service-role keys, database passwords or Firebase private keys to GitHub. Use Render Environment Variables. Keep `DATABASE_URL` and all server secrets on the backend only.
 
-The current session provides a public sandbox URL rather than a direct Render deployment connector. To deploy on Render, create a Node service that runs `pnpm build && pnpm start`, provide the environment variables above, and point the mobile app's `API_BASE_URL` to the permanent Render URL.
+## Documents
 
-## Related documents
-
-- [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
-- [DATABASE.md](./DATABASE.md)
-- [TEST_REPORT.md](./TEST_REPORT.md)
+- [Render + Supabase deployment](./RENDER_DEPLOY.md)
+- [API documentation](./API_DOCUMENTATION.md)
+- [Database overview](./DATABASE.md)
+- [Environment template](./ENV_TEMPLATE.txt)
+- [Test report](./TEST_REPORT.md)
