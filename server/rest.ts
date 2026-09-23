@@ -14,6 +14,7 @@ import {
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import { sdk } from "./_core/sdk";
+import { ENV } from "./_core/env";
 
 type AuthenticatedRequest = Request & { pirganjUser?: typeof users.$inferSelect };
 
@@ -58,12 +59,30 @@ function parseImages(value: string | null) {
   }
 }
 
+function requireAdminToken(req: Request, res: Response) {
+  const token = req.header("x-admin-token");
+  if (!ENV.adminApiToken) {
+    sendError(res, 503, "Admin API token এখনো Render-এ সেট করা হয়নি।");
+    return false;
+  }
+  if (!token || token !== ENV.adminApiToken) {
+    sendError(res, 401, "Admin token সঠিক নয়।");
+    return false;
+  }
+  return true;
+}
+
+function bodyString(body: Record<string, unknown>, key: string, fallback = "") {
+  const value = body[key];
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
 export function registerRestRoutes(app: Express) {
   const router = Router();
 
   router.use((_req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-token");
     res.header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
     if (_req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -174,7 +193,9 @@ export function registerRestRoutes(app: Express) {
   });
 
   router.get("/admin/dashboard", async (req, res) => {
-    if (!(await requireAdmin(req, res))) return;
+    if (req.header("x-admin-token")) {
+      if (!requireAdminToken(req, res)) return;
+    } else if (!(await requireAdmin(req, res))) return;
     const db = await getDb();
     if (!db) return sendError(res, 503, "ড্যাশবোর্ড তথ্য এখন পাওয়া যাচ্ছে না।");
     const [[userCount], [postCount], [serviceCount], [donorCount], [emergencyCount], [reportCount]] = await Promise.all([
@@ -186,6 +207,87 @@ export function registerRestRoutes(app: Express) {
       db.select({ value: sql<number>`count(*)` }).from(reports).where(eq(reports.status, "open")),
     ]);
     res.json({ success: true, data: { users: Number(userCount?.value ?? 0), posts: Number(postCount?.value ?? 0), services: Number(serviceCount?.value ?? 0), donors: Number(donorCount?.value ?? 0), emergencyRequests: Number(emergencyCount?.value ?? 0), openReports: Number(reportCount?.value ?? 0) } });
+  });
+
+  router.post("/admin/categories", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    const name = bodyString(req.body, "name");
+    const slug = bodyString(req.body, "slug");
+    if (!name || !slug) return sendError(res, 400, "নাম এবং slug প্রয়োজন।");
+    const [created] = await database.insert(categories).values({ name, slug, icon: bodyString(req.body, "icon") || null }).returning();
+    return res.status(201).json({ success: true, data: created });
+  });
+
+  router.post("/admin/services", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    const name = bodyString(req.body, "name");
+    if (!name) return sendError(res, 400, "সেবার নাম প্রয়োজন।");
+    const [created] = await database.insert(services).values({
+      name,
+      categoryId: Number(req.body.categoryId) || null,
+      shortDescription: bodyString(req.body, "shortDescription") || null,
+      description: bodyString(req.body, "description") || null,
+      phone: bodyString(req.body, "phone") || null,
+      address: bodyString(req.body, "address") || null,
+      openingHours: bodyString(req.body, "openingHours") || null,
+      imageUrl: bodyString(req.body, "imageUrl") || null,
+      status: "published",
+    }).returning();
+    return res.status(201).json({ success: true, data: created });
+  });
+
+  router.patch("/admin/services/:id", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    const [updated] = await database.update(services).set({
+      name: bodyString(req.body, "name"),
+      categoryId: Number(req.body.categoryId) || null,
+      shortDescription: bodyString(req.body, "shortDescription") || null,
+      description: bodyString(req.body, "description") || null,
+      phone: bodyString(req.body, "phone") || null,
+      address: bodyString(req.body, "address") || null,
+      openingHours: bodyString(req.body, "openingHours") || null,
+      imageUrl: bodyString(req.body, "imageUrl") || null,
+      status: req.body.status === "hidden" ? "pending" : "published",
+    }).where(eq(services.id, Number(req.params.id))).returning();
+    if (!updated) return sendError(res, 404, "সেবাটি পাওয়া যায়নি।");
+    return res.json({ success: true, data: updated });
+  });
+
+  router.delete("/admin/services/:id", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    await database.update(services).set({ status: "rejected" }).where(eq(services.id, Number(req.params.id)));
+    return res.json({ success: true });
+  });
+
+  router.post("/admin/posts", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    const [created] = await database.insert(posts).values({
+      category: bodyString(req.body, "category", "সাধারণ"),
+      title: bodyString(req.body, "title") || null,
+      content: bodyString(req.body, "content") || null,
+      location: bodyString(req.body, "location") || null,
+      status: "published",
+      isPinned: Boolean(req.body.isPinned),
+    }).returning();
+    return res.status(201).json({ success: true, data: created });
+  });
+
+  router.patch("/admin/emergency-requests/:id/close", async (req, res) => {
+    if (!requireAdminToken(req, res)) return;
+    const database = await getDb();
+    if (!database) return sendError(res, 503, "Database এখন পাওয়া যাচ্ছে না।");
+    await database.update(emergencyRequests).set({ status: "closed" }).where(eq(emergencyRequests.id, Number(req.params.id)));
+    return res.json({ success: true });
   });
 
   app.use("/api", router);
