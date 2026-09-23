@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1790155201830,
+      "tag": "0000_flimsy_tana_nile",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1790155269398,
+      "tag": "0001_violet_thunderbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1790155285440,
+      "tag": "0002_nasty_firebrand",
+      "breakpoints": true
+    }
+  ]
+}
