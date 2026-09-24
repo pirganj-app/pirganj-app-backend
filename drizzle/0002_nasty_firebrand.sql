@@ -1,1 +1,0 @@
-ALTER TABLE `users` DROP INDEX `users_username_unique`;
