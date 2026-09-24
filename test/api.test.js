@@ -11,6 +11,13 @@ test('store falls back to seed data when Supabase is not configured', async () =
   assert.equal((await store.findPosts('জরুরি')).length, 1);
 });
 
+test('new content is immediately approved in local fallback mode', async () => {
+  const post = await store.addPost({ author: 'টেস্টার', title: 'টেস্ট পোস্ট', body: 'কমিউনিটি টেস্ট', tag: 'খবর' });
+  const service = await store.addService({ name: 'টেস্ট সেবা', category: 'দোকান' });
+  assert.equal(post.status, 'approved');
+  assert.equal(service.name, 'টেস্ট সেবা');
+});
+
 test('async store exposes overview data', async () => {
   const overview = await store.getOverview();
   assert.ok(Array.isArray(overview.services));
