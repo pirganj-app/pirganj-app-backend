@@ -1,29 +1,104 @@
-const services = [
+const { getSupabase } = require('./supabase');
+
+const seedServices = [
   { id: 'd1', name: 'পীরগঞ্জ উপজেলা স্বাস্থ্য কমপ্লেক্স', category: 'হাসপাতাল', meta: '২৪ ঘণ্টা জরুরি সেবা', location: 'পীরগঞ্জ সদর, ঠাকুরগাঁও', phone: '০৫৬২২-৫৬০০১', open: 'এখন খোলা', icon: '＋' },
   { id: 'd2', name: 'মা ফার্মেসি', category: 'ফার্মেসি', meta: 'লাইসেন্সধারী ফার্মেসি', location: 'কলেজ রোড, পীরগঞ্জ', phone: '০১৭১২-৩৪৫৬৭৮', open: 'সকাল ৮টা–রাত ১১টা', icon: '✚' },
-  { id: 'd3', name: 'পীরগঞ্জ সরকারি কলেজ', category: 'কলেজ', meta: 'উচ্চশিক্ষা ও অনার্স', location: 'পীরগঞ্জ পৌরসভা', phone: '০৫৬২২-৫৬১১০', open: 'রবি–বৃহস্পতি', icon: '▤' },
-  { id: 'd4', name: 'আল-আমিন রেস্টুরেন্ট', category: 'রেস্টুরেন্ট', meta: 'দেশি খাবার ও পারিবারিক পরিবেশ', location: 'বাসস্ট্যান্ড, পীরগঞ্জ', phone: '০১৮১৯-৯৮৭৬৫৪', open: 'সকাল ১০টা–রাত ১০টা', icon: '⌁' },
 ];
-const posts = [
+const seedPosts = [
   { id: 'p1', author: 'তানভীর আহমেদ', tag: 'জরুরি', title: 'O+ রক্ত প্রয়োজন — দ্রুত সহায়তা চাই', body: 'পীরগঞ্জ স্বাস্থ্য কমপ্লেক্সে ২ ব্যাগ O+ রক্ত প্রয়োজন।', likes: 38, comments: 12 },
   { id: 'p2', author: 'মেহেদী হাসান', tag: 'নোটিশ', title: 'আগামীকাল বিদ্যুৎ সরবরাহ বন্ধ থাকবে', body: 'রক্ষণাবেক্ষণ কাজের জন্য সকাল ৯টা থেকে দুপুর ২টা পর্যন্ত।', likes: 21, comments: 6 },
 ];
-const donors = [
+const seedDonors = [
   { name: 'আবু সাঈদ', group: 'O+', area: 'পীরগঞ্জ সদর', available: true },
   { name: 'নুসরাত জাহান', group: 'A+', area: 'ভোমরাদহ', available: true },
 ];
-const notices = [
+const seedNotices = [
   { id: 'n1', title: 'উপজেলা পরিষদের মাসিক সভা', date: '২৮ সেপ্টেম্বর', label: 'সরকারি' },
   { id: 'n2', title: 'পীরগঞ্জ বাজারে পরিচ্ছন্নতা অভিযান', date: '৩০ সেপ্টেম্বর', label: 'কমিউনিটি' },
 ];
 
-function findServices(query = {}) {
-  const category = query.category;
-  const search = String(query.search || '').toLowerCase();
-  return services.filter((item) => (!category || category === 'সব' || item.category === category) && (!search || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(search)));
-}
-function findPosts(tag) { return posts.filter((item) => !tag || tag === 'সব' || item.tag === tag); }
-function addPost(data) { const post = { id: `p${Date.now()}`, author: data.author, tag: data.tag, title: data.title, body: data.body, likes: 0, comments: 0 }; posts.unshift(post); return post; }
-function toggleLike(id) { const post = posts.find((item) => item.id === id); if (!post) return null; post.likes += 1; return post; }
+function client() { return getSupabase(); }
+function hasDatabase() { return Boolean(client()); }
+function mapService(row) { return { id: row.id, name: row.name, category: row.category, meta: row.meta || '', location: row.location || '', phone: row.phone || '', open: row.open_hours || '', icon: row.icon || '•', imageUrl: row.image_url || null }; }
+function mapPost(row) { return { id: row.id, author: row.author_name, tag: row.tag, title: row.title, body: row.body, likes: row.likes_count || 0, comments: row.comments_count || 0, shares: row.shares_count || 0, status: row.status }; }
+function mapDonor(row) { return { id: row.id, name: row.name, group: row.blood_group, area: row.area || '', phone: row.phone || '', available: row.available }; }
+function mapNotice(row) { return { id: row.id, title: row.title, body: row.body || '', date: row.notice_date || '', label: row.label }; }
+function mapJob(row) { return { id: row.id, title: row.title, company: row.company || '', description: row.description || '', location: row.location || '', deadline: row.deadline || '', contactPhone: row.contact_phone || '' }; }
+function mapLostFound(row) { return { id: row.id, type: row.item_type, title: row.title, description: row.description || '', location: row.location || '', contactPhone: row.contact_phone || '', imageUrl: row.image_url || '' }; }
 
-module.exports = { services, posts, donors, notices, findServices, findPosts, addPost, toggleLike };
+async function findServices({ category, search } = {}) {
+  if (!hasDatabase()) return seedServices.filter((item) => (!category || category === 'সব' || item.category === category) && (!search || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(String(search).toLowerCase())));
+  let query = client().from('services').select('*').eq('status', 'approved').order('created_at', { ascending: false });
+  if (category && category !== 'সব') query = query.eq('category', category);
+  const { data, error } = await query;
+  if (error) throw error;
+  const normalizedSearch = String(search || '').toLowerCase();
+  return (data || []).map(mapService).filter((item) => !normalizedSearch || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(normalizedSearch));
+}
+
+async function findServiceById(id) {
+  if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null;
+  const { data, error } = await client().from('services').select('*').eq('id', id).eq('status', 'approved').maybeSingle();
+  if (error) throw error;
+  return data ? mapService(data) : null;
+}
+
+async function findPosts(tag) {
+  if (!hasDatabase()) return seedPosts.filter((item) => !tag || tag === 'সব' || item.tag === tag);
+  let query = client().from('posts').select('*').eq('status', 'approved').order('created_at', { ascending: false });
+  if (tag && tag !== 'সব') query = query.eq('tag', tag);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapPost);
+}
+
+async function addPost({ author, title, body, tag, authorId = null }) {
+  if (!hasDatabase()) { const post = { id: `p${Date.now()}`, author, tag, title, body, likes: 0, comments: 0, status: 'pending' }; seedPosts.unshift(post); return post; }
+  const { data, error } = await client().from('posts').insert({ author_name: author, author_id: authorId, title, body, tag, status: 'pending' }).select('*').single();
+  if (error) throw error;
+  return mapPost(data);
+}
+
+async function toggleLike(id) {
+  if (!hasDatabase()) { const post = seedPosts.find((item) => item.id === id); if (!post) return null; post.likes += 1; return post; }
+  const db = client();
+  const current = await db.from('posts').select('likes_count').eq('id', id).maybeSingle();
+  if (current.error) throw current.error;
+  if (!current.data) return null;
+  const updated = await db.from('posts').update({ likes_count: (current.data.likes_count || 0) + 1 }).eq('id', id).select('*').single();
+  if (updated.error) throw updated.error;
+  return mapPost(updated.data);
+}
+
+async function getComments(postId) {
+  if (!hasDatabase()) return [];
+  const { data, error } = await client().from('comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map((row) => ({ id: row.id, author: row.author_name, body: row.body, createdAt: row.created_at }));
+}
+
+async function addComment(postId, { author, body, authorId = null }) {
+  if (!hasDatabase()) return null;
+  const { data, error } = await client().from('comments').insert({ post_id: postId, author_name: author || 'পীরগঞ্জবাসী', author_id: authorId, body }).select('*').single();
+  if (error) throw error;
+  return { id: data.id, author: data.author_name, body: data.body, createdAt: data.created_at };
+}
+
+async function getDonors(group) {
+  if (!hasDatabase()) return seedDonors.filter((item) => !group || item.group === group);
+  let query = client().from('donors').select('*').eq('available', true).order('created_at', { ascending: false });
+  if (group) query = query.eq('blood_group', group);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapDonor);
+}
+async function getBloodRequests() { return hasDatabase() ? queryRows('blood_requests', 'status', 'open') : seedPosts.filter((post) => post.tag === 'জরুরি'); }
+async function getNotices() { return hasDatabase() ? queryRows('notices', 'status', 'published', mapNotice) : seedNotices; }
+async function getJobs() { return hasDatabase() ? queryRows('jobs', 'status', 'published', mapJob) : []; }
+async function getLostFound() { return hasDatabase() ? queryRows('lost_found', 'status', 'published', mapLostFound) : []; }
+async function queryRows(table, field, value, mapper = (row) => row) { const { data, error } = await client().from(table).select('*').eq(field, value).order('created_at', { ascending: false }); if (error) throw error; return (data || []).map(mapper); }
+async function searchAll(q) { const [serviceRows, postRows] = await Promise.all([findServices({ search: q }), findPosts()]); const normalized = String(q || '').toLowerCase(); return { services: serviceRows, posts: postRows.filter((post) => `${post.title} ${post.body}`.toLowerCase().includes(normalized)) }; }
+async function getOverview() { const [services, posts, donors, notices] = await Promise.all([findServices(), findPosts(), getDonors(), getNotices()]); return { services, posts, donors, notices }; }
+async function getAdminSummary() { if (!hasDatabase()) return { pending: seedPosts.length, members: 0, reports: 0, services: seedServices.length }; const db = client(); const [pending, serviceRows, profiles] = await Promise.all([db.from('posts').select('id', { count: 'exact', head: true }).eq('status', 'pending'), db.from('services').select('id', { count: 'exact', head: true }), db.from('profiles').select('id', { count: 'exact', head: true })]); if (pending.error || serviceRows.error || profiles.error) throw pending.error || serviceRows.error || profiles.error; return { pending: pending.count || 0, members: profiles.count || 0, reports: 0, services: serviceRows.count || 0 }; }
+
+module.exports = { findServices, findServiceById, findPosts, addPost, toggleLike, getComments, addComment, getDonors, getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary };

@@ -1,22 +1,30 @@
 const express = require('express');
-const { services, posts, donors, notices, findServices, findPosts, addPost, toggleLike } = require('./store');
+const {
+  findServices, findServiceById, findPosts, addPost, toggleLike,
+  getComments, addComment, getDonors, getBloodRequests, getNotices,
+  getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
+} = require('./store');
+
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
+const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: 'v1' }));
 router.get('/config', (_req, res) => send(res, { app: 'Pirganj', package: 'com.pirganj.app', locale: 'bn-BD' }));
-router.get('/overview', (_req, res) => send(res, { services, posts, donors, notices }));
-router.get('/services', (req, res) => send(res, findServices({ category: req.query.category, search: req.query.search })));
-router.get('/services/:id', (req, res) => { const item = services.find((service) => service.id === req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); });
-router.get('/posts', (req, res) => send(res, findPosts(req.query.tag)));
-router.post('/posts', (req, res) => { const { author, title, body, tag } = req.body || {}; if (!author || !title || !body || !tag) return send(res, { message: 'author, title, body and tag are required' }, 400); return send(res, addPost({ author, title, body, tag }), 201); });
-router.post('/posts/:id/like', (req, res) => { const post = toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); });
-router.get('/donors', (req, res) => send(res, donors.filter((donor) => !req.query.group || donor.group === req.query.group)));
-router.get('/notices', (_req, res) => send(res, notices));
-router.get('/blood-requests', (_req, res) => send(res, posts.filter((post) => post.tag === 'জরুরি')));
-router.get('/jobs', (_req, res) => send(res, posts.filter((post) => post.tag === 'চাকরি')));
-router.get('/lost-found', (_req, res) => send(res, posts.filter((post) => post.tag === 'হারানো/পাওয়া')));
-router.get('/search', (req, res) => { const q = String(req.query.q || '').toLowerCase(); return send(res, { services: findServices({ search: q }), posts: posts.filter((post) => `${post.title} ${post.body}`.toLowerCase().includes(q)) }); });
-router.get('/admin/summary', (_req, res) => send(res, { pending: posts.length, members: 1284, reports: 3, services: services.length }));
+router.get('/overview', asyncRoute(async (_req, res) => send(res, await getOverview())));
+router.get('/services', asyncRoute(async (req, res) => send(res, await findServices({ category: req.query.category, search: req.query.search }))));
+router.get('/services/:id', asyncRoute(async (req, res) => { const item = await findServiceById(req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); }));
+router.get('/posts', asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag))));
+router.post('/posts', asyncRoute(async (req, res) => { const { author, title, body, tag, authorId } = req.body || {}; if (!author || !title || !body || !tag) return send(res, { message: 'author, title, body and tag are required' }, 400); return send(res, await addPost({ author, title, body, tag, authorId }), 201); }));
+router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
+router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id))));
+router.post('/posts/:id/comments', asyncRoute(async (req, res) => { const { author, authorId, body } = req.body || {}; if (!body || !String(body).trim()) return send(res, { message: 'body is required' }, 400); return send(res, await addComment(req.params.id, { author, authorId, body: String(body).trim() }), 201); }));
+router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group))));
+router.get('/notices', asyncRoute(async (_req, res) => send(res, await getNotices())));
+router.get('/blood-requests', asyncRoute(async (_req, res) => send(res, await getBloodRequests())));
+router.get('/jobs', asyncRoute(async (_req, res) => send(res, await getJobs())));
+router.get('/lost-found', asyncRoute(async (_req, res) => send(res, await getLostFound())));
+router.get('/search', asyncRoute(async (req, res) => send(res, await searchAll(req.query.q || ''))));
+router.get('/admin/summary', asyncRoute(async (_req, res) => send(res, await getAdminSummary())));
 
 module.exports = router;
