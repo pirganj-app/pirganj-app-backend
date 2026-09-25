@@ -65,6 +65,22 @@ async function updateUser(id, fields) {
   return publicUser(data);
 }
 
+async function deleteUser(id) {
+  const db = getSupabase();
+  if (!db) {
+    const user = await getUserById(id);
+    if (!user) return false;
+    fallbackUsers.delete(user.phone);
+    for (const [key, item] of fallbackItems.entries()) {
+      if (item.ownerId === id) fallbackItems.delete(key);
+    }
+    return true;
+  }
+  const { data, error } = await db.from('users').delete().eq('id', id).select('id');
+  if (error) throw error;
+  return Boolean(data?.length);
+}
+
 function authenticate(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -80,4 +96,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, registerUser, loginUser, getUserById, updateUser, authenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };

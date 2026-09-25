@@ -5,7 +5,7 @@ const {
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
   getMyItems, updateOwned, deleteOwned,
 } = require('./store');
-const { registerUser, loginUser, getUserById, updateUser, authenticate } = require('./auth');
+const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate } = require('./auth');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -19,6 +19,7 @@ router.post('/auth/register', asyncRoute(async (req, res) => { const missing = r
 router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser(req.body)); }));
 router.get('/auth/me', ...owner(async (req, res) => { const user = await getUserById(req.user.sub); return user ? send(res, { user: { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '' } }) : send(res, { message: 'User not found' }, 404); }));
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
+router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));
 router.get('/profile/items', ...owner(async (req, res) => send(res, await getMyItems(req.user.sub))));
 
 router.get('/overview', asyncRoute(async (_req, res) => send(res, await getOverview())));
