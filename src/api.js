@@ -5,7 +5,7 @@ const {
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
   getMyItems, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
-const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate } = require('./auth');
+const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate } = require('./auth');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -27,7 +27,7 @@ router.get('/overview', asyncRoute(async (_req, res) => send(res, await getOverv
 router.get('/services', asyncRoute(async (req, res) => send(res, await findServices({ category: req.query.category, search: req.query.search }))));
 router.get('/services/:id', asyncRoute(async (req, res) => { const item = await findServiceById(req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); }));
 router.post('/services', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'category']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await addService(req.body, req.user.sub), 201); }));
-router.get('/posts', asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag))));
+router.get('/posts', optionalAuthenticate, asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag, req.user?.sub))));
 router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); return send(res, await addPost({ ...req.body, authorId: req.user.sub, author: user.name }), 201); }));
 router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
 router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id))));

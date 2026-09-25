@@ -88,6 +88,13 @@ function authenticate(req, res, next) {
   try { req.user = jwt.verify(token, JWT_SECRET); return next(); } catch (_error) { return res.status(401).json({ success: false, data: { message: 'Invalid or expired login session' } }); }
 }
 
+function optionalAuthenticate(req, _res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (token) { try { req.user = jwt.verify(token, JWT_SECRET); } catch (_) {} }
+  return next();
+}
+
 function rememberFallbackItem(item) {
   if (item && item.id && item.ownerId) fallbackItems.set(String(item.id), item);
   return item;
@@ -96,4 +103,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
