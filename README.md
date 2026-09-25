@@ -254,3 +254,14 @@ For implementation details, consult the source files and the references above.
 **Project:** Pirganj | **Backend:** Express.js | **Database:** Supabase | **Deployment:** Render
 
 [1] [2] [3] [4]
+
+
+## Account and ownership system
+
+The API now requires an authenticated account for every create, update, and delete operation. Registration uses a phone number, password, name, sex, and address. Passwords are stored as bcrypt hashes and successful registration/login returns a bearer JWT. Set a strong random `JWT_SECRET` in Render; never use the local fallback secret in production.
+
+Run the migration in [`supabase/schema_auth_ownership.sql`](supabase/schema_auth_ownership.sql) before enabling the production account flow. It creates the `users` table, stores the profile fields, adds `owner_id` to user-created resources, adds indexes, and blocks anonymous direct table access. The backend uses the Supabase service-role key and checks `owner_id` server-side, so a user can only edit or delete records that they created.
+
+New account endpoints are `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `PUT /api/v1/auth/me`, and `GET /api/v1/profile/items`. Owned records can be changed or removed through `PUT /api/v1/profile/items/:resource/:id` and `DELETE /api/v1/profile/items/:resource/:id`. Send `Authorization: Bearer <token>` with all protected requests. Public read endpoints remain available. Donor and blood-request reads accept `?group=সব`, `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, or `O-`.
+
+Required production environment variables are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and a strong `JWT_SECRET`. Existing rows created before this migration have `owner_id = NULL`; they remain readable but cannot be edited or deleted by normal accounts until an administrator assigns ownership.

@@ -1,0 +1,68 @@
+-- Pirganj authentication and ownership migration
+-- Run this once in Supabase SQL Editor. Keep SUPABASE_SERVICE_ROLE_KEY server-side only.
+
+create extension if not exists pgcrypto;
+
+create table if not exists public.users (
+  id uuid primary key default gen_random_uuid(),
+  phone text not null unique,
+  password_hash text not null,
+  name text not null,
+  sex text not null check (sex in ('পুরুষ', 'নারী', 'অন্যান্য')),
+  address text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists users_phone_idx on public.users(phone);
+
+-- Every user-created record is linked to the account that created it.
+alter table if exists public.services add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.posts add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.donors add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.blood_requests add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.notices add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.jobs add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.lost_found add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.comments add column if not exists owner_id uuid references public.users(id) on delete cascade;
+
+create index if not exists services_owner_id_idx on public.services(owner_id);
+create index if not exists posts_owner_id_idx on public.posts(owner_id);
+create index if not exists donors_owner_id_idx on public.donors(owner_id);
+create index if not exists blood_requests_owner_id_idx on public.blood_requests(owner_id);
+create index if not exists notices_owner_id_idx on public.notices(owner_id);
+create index if not exists jobs_owner_id_idx on public.jobs(owner_id);
+create index if not exists lost_found_owner_id_idx on public.lost_found(owner_id);
+create index if not exists comments_owner_id_idx on public.comments(owner_id);
+
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists users_set_updated_at on public.users;
+create trigger users_set_updated_at before update on public.users
+for each row execute function public.set_updated_at();
+
+-- The backend uses the Supabase service-role key, so it performs authorization
+-- in the API using owner_id. RLS remains enabled to prevent accidental public access.
+alter table public.users enable row level security;
+drop policy if exists users_no_anon_access on public.users;
+create policy users_no_anon_access on public.users for all to anon using (false) with check (false);
+
+-- These policies protect direct client access. The service role used by Render bypasses them.
+do $$
+declare t text;
+begin
+  foreach t in array array['services','posts','donors','blood_requests','notices','jobs','lost_found','comments'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists %I on public.%I', t || '_no_anon_access', t);
+    execute format('create policy %I on public.%I for all to anon using (false) with check (false)', t || '_no_anon_access', t);
+  end loop;
+end $$;
+
+-- Existing rows are intentionally left with owner_id NULL. They remain publicly readable,
+-- but cannot be edited or deleted by any account until an administrator assigns ownership.
