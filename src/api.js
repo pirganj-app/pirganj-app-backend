@@ -3,7 +3,7 @@ const {
   findServices, findServiceById, findPosts, addPost, addService, addDonor, addBloodRequest,
   addNotice, addJob, addLostFound, toggleLike, getComments, addComment, getDonors,
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
-  getMyItems, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions,
+  getMyItems, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
 const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate } = require('./auth');
 
@@ -12,6 +12,7 @@ const send = (res, data, status = 200) => res.status(status).json({ success: sta
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const required = (body, fields) => fields.filter((field) => !body[field] || !String(body[field]).trim());
 const owner = (handler) => [authenticate, asyncRoute(handler)];
+const enrichReactions = async (reactions) => Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id }; }));
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: 'v1' }));
 router.get('/config', (_req, res) => send(res, { app: 'Pirganj', package: 'com.pirganj.app', locale: 'bn-BD' }));
@@ -33,8 +34,10 @@ router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await
 router.post('/posts/:id/comments', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); return send(res, await addComment(req.params.id, { ...req.body, author: user.name, authorId: req.user.sub }), 201); }));
 router.put('/comments/:id', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const result = await updateComment(req.params.id, req.user.sub, req.body.body); return result ? send(res, result) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
 router.delete('/comments/:id', ...owner(async (req, res) => { const deleted = await deleteComment(req.params.id, req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
-router.post('/posts/:id/reactions', ...owner(async (req, res) => send(res, await toggleReaction(req.params.id, req.user.sub, req.body?.reaction || 'like'))));
-router.get('/posts/:id/reactions', asyncRoute(async (req, res) => { const reactions = await getReactions(req.params.id); const enriched = await Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id }; })); return send(res, enriched); }));
+router.post('/posts/:id/reactions', ...owner(async (req, res) => send(res, await enrichReactions(await toggleReaction(req.params.id, req.user.sub, req.body?.reaction || 'like')))));
+router.get('/posts/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getReactions(req.params.id)))));
+router.post('/comments/:id/reactions', ...owner(async (req, res) => send(res, await enrichReactions(await toggleCommentReaction(req.params.id, req.user.sub, req.body?.reaction || 'like')))));
+router.get('/comments/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getCommentReactions(req.params.id)))));
 router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group))));
 router.post('/donors', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'bloodGroup', 'phone']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await addDonor(req.body, req.user.sub), 201); }));
 router.get('/notices', asyncRoute(async (_req, res) => send(res, await getNotices())));
