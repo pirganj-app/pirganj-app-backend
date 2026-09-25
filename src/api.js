@@ -3,7 +3,7 @@ const {
   findServices, findServiceById, findPosts, addPost, addService, addDonor, addBloodRequest,
   addNotice, addJob, addLostFound, toggleLike, getComments, addComment, getDonors,
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
-  getMyItems, updateOwned, deleteOwned,
+  getMyItems, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions,
 } = require('./store');
 const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate } = require('./auth');
 
@@ -27,10 +27,14 @@ router.get('/services', asyncRoute(async (req, res) => send(res, await findServi
 router.get('/services/:id', asyncRoute(async (req, res) => { const item = await findServiceById(req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); }));
 router.post('/services', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'category']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await addService(req.body, req.user.sub), 201); }));
 router.get('/posts', asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag))));
-router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await addPost({ ...req.body, authorId: req.user.sub, author: req.body.author || 'পীরগঞ্জবাসী' }), 201); }));
+router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); return send(res, await addPost({ ...req.body, authorId: req.user.sub, author: user.name }), 201); }));
 router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
 router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id))));
-router.post('/posts/:id/comments', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); return send(res, await addComment(req.params.id, { ...req.body, authorId: req.user.sub }), 201); }));
+router.post('/posts/:id/comments', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); return send(res, await addComment(req.params.id, { ...req.body, author: user.name, authorId: req.user.sub }), 201); }));
+router.put('/comments/:id', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const result = await updateComment(req.params.id, req.user.sub, req.body.body); return result ? send(res, result) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
+router.delete('/comments/:id', ...owner(async (req, res) => { const deleted = await deleteComment(req.params.id, req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
+router.post('/posts/:id/reactions', ...owner(async (req, res) => send(res, await toggleReaction(req.params.id, req.user.sub, req.body?.reaction || 'like'))));
+router.get('/posts/:id/reactions', asyncRoute(async (req, res) => { const reactions = await getReactions(req.params.id); const enriched = await Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id }; })); return send(res, enriched); }));
 router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group))));
 router.post('/donors', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'bloodGroup', 'phone']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await addDonor(req.body, req.user.sub), 201); }));
 router.get('/notices', asyncRoute(async (_req, res) => send(res, await getNotices())));

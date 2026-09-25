@@ -25,6 +25,16 @@ alter table if exists public.notices add column if not exists owner_id uuid refe
 alter table if exists public.jobs add column if not exists owner_id uuid references public.users(id) on delete cascade;
 alter table if exists public.lost_found add column if not exists owner_id uuid references public.users(id) on delete cascade;
 alter table if exists public.comments add column if not exists owner_id uuid references public.users(id) on delete cascade;
+alter table if exists public.comments add column if not exists parent_id uuid references public.comments(id) on delete cascade;
+
+create table if not exists public.post_reactions (
+  id uuid primary key default gen_random_uuid(),
+  post_id uuid not null references public.posts(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  reaction text not null default 'like',
+  created_at timestamptz not null default now(),
+  unique(post_id, user_id)
+);
 
 create index if not exists services_owner_id_idx on public.services(owner_id);
 create index if not exists posts_owner_id_idx on public.posts(owner_id);
@@ -34,6 +44,7 @@ create index if not exists notices_owner_id_idx on public.notices(owner_id);
 create index if not exists jobs_owner_id_idx on public.jobs(owner_id);
 create index if not exists lost_found_owner_id_idx on public.lost_found(owner_id);
 create index if not exists comments_owner_id_idx on public.comments(owner_id);
+create index if not exists post_reactions_post_id_idx on public.post_reactions(post_id);
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
@@ -57,7 +68,7 @@ create policy users_no_anon_access on public.users for all to anon using (false)
 do $$
 declare t text;
 begin
-  foreach t in array array['services','posts','donors','blood_requests','notices','jobs','lost_found','comments'] loop
+  foreach t in array array['services','posts','donors','blood_requests','notices','jobs','lost_found','comments','post_reactions'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I on public.%I', t || '_no_anon_access', t);
     execute format('create policy %I on public.%I for all to anon using (false) with check (false)', t || '_no_anon_access', t);
