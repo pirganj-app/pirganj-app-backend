@@ -45,6 +45,11 @@ function toPublicUrl(value) {
   return `${PUBLIC_API_URL}/api/media/${encodeURIComponent(storagePath).replace(/%2F/g, '/')}`;
 }
 
+function toDatabaseUrl(value) {
+  if (value === undefined || value === null || value === '') return value;
+  return toPublicUrl(value);
+}
+
 async function uploadImage({ buffer, mimetype, originalname, userId, kind }) {
   if (!buffer || buffer.length === 0) throw Object.assign(new Error('Image is required'), { status: 400 });
   if (buffer.length > MAX_IMAGE_BYTES) throw Object.assign(new Error('Image must be 2MB or smaller'), { status: 413 });
@@ -55,7 +60,7 @@ async function uploadImage({ buffer, mimetype, originalname, userId, kind }) {
   const filePath = `${kind}/${userId}/${Date.now()}-${crypto.randomUUID()}${extension(mimetype, originalname)}`;
   const result = await db.storage.from(BUCKET).upload(filePath, buffer, { contentType: mimetype, upsert: false, cacheControl: '31536000' });
   if (result.error) throw result.error;
-  return { path: filePath, url: toPublicUrl(filePath) };
+  return { path: filePath, url: toDatabaseUrl(filePath) };
 }
 
 async function downloadImage(value) {
@@ -107,4 +112,4 @@ async function removeImagesByPrefixes(prefixes) {
   return removed;
 }
 
-module.exports = { BUCKET, MAX_IMAGE_BYTES, toStoragePath, toPublicUrl, uploadImage, downloadImage, removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes };
+module.exports = { BUCKET, MAX_IMAGE_BYTES, toStoragePath, toPublicUrl, toDatabaseUrl, uploadImage, downloadImage, removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes };

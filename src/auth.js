@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
-const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toStoragePath, toPublicUrl } = require('./storage');
+const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toDatabaseUrl, toPublicUrl } = require('./storage');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
 const fallbackUsers = new Map();
@@ -25,7 +25,7 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
   if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
   if (!name || !sex || !address) throw new Error('Name, sex, and address are required');
   const db = getSupabase();
-  avatarUrl = toStoragePath(avatarUrl);
+  avatarUrl = toDatabaseUrl(avatarUrl);
   const passwordHash = await bcrypt.hash(String(password), 12);
   if (!db) {
     if (fallbackUsers.has(normalized)) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
@@ -58,7 +58,7 @@ async function getUserById(id) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toStoragePath(fields.avatarUrl) };
+  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl) };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }

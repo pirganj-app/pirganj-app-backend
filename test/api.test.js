@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const app = require('../src/server');
 const store = require('../src/store');
-const { toStoragePath, toPublicUrl } = require('../src/storage');
+const { toStoragePath, toPublicUrl, toDatabaseUrl } = require('../src/storage');
 const { registerUser, getUserById, deleteUser } = require('../src/auth');
 
 test('store falls back to seed data when Supabase is not configured', async () => {
@@ -37,6 +37,7 @@ test('storage URLs are exposed without the legacy API segment', () => {
   assert.equal(toStoragePath(legacy), 'profiles/example.jpg');
   assert.equal(toPublicUrl(legacy).includes('/' + 'v' + '1/'), false);
   assert.match(toPublicUrl(legacy), /\/api\/media\/profiles\/example\.jpg$/);
+  assert.match(toDatabaseUrl('profiles/example.jpg'), /^https?:\/\/.*\/api\/media\/profiles\/example\.jpg$/);
 });
 
 test('account deletion removes the fallback user and every owned item', async () => {
