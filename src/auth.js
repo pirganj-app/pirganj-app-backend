@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
+const { removeImageByUrl } = require('./storage');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
 const fallbackUsers = new Map();
@@ -15,10 +16,10 @@ function signUser(user) {
 }
 
 function publicUser(user) {
-  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '' };
+  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: user.avatar_url || user.avatarUrl || null };
 }
 
-async function registerUser({ phone, password, name, sex, address }) {
+async function registerUser({ phone, password, name, sex, address, avatarUrl }) {
   const normalized = normalizePhone(phone);
   if (!/^\+?[0-9]{8,15}$/.test(normalized)) throw new Error('A valid phone number is required');
   if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
@@ -27,14 +28,14 @@ async function registerUser({ phone, password, name, sex, address }) {
   const passwordHash = await bcrypt.hash(String(password), 12);
   if (!db) {
     if (fallbackUsers.has(normalized)) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
-    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim() };
+    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null };
     fallbackUsers.set(normalized, user);
     return { token: signUser(user), user: publicUser(user) };
   }
   const existing = await db.from('users').select('id').eq('phone', normalized).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
-  const { data, error } = await db.from('users').insert({ phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim() }).select('*').single();
+  const { data, error } = await db.from('users').insert({ phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null }).select('*').single();
   if (error) throw error;
   return { token: signUser(data), user: publicUser(data) };
 }
@@ -56,12 +57,15 @@ async function getUserById(id) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name, sex: fields.sex, address: fields.address };
+  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }
+  const previous = await db.from('users').select('avatar_url').eq('id', id).maybeSingle();
+  if (previous.error) throw previous.error;
   const { data, error } = await db.from('users').update(clean).eq('id', id).select('*').single();
   if (error) throw error;
+  if (clean.avatar_url !== undefined && previous.data?.avatar_url && previous.data.avatar_url !== data.avatar_url) await removeImageByUrl(previous.data.avatar_url);
   return publicUser(data);
 }
 
