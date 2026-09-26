@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
-const { removeImageByUrl } = require('./storage');
+const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toStoragePath, toPublicUrl } = require('./storage');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
 const fallbackUsers = new Map();
@@ -16,7 +16,7 @@ function signUser(user) {
 }
 
 function publicUser(user) {
-  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: user.avatar_url || user.avatarUrl || null };
+  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null) };
 }
 
 async function registerUser({ phone, password, name, sex, address, avatarUrl }) {
@@ -25,6 +25,7 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
   if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
   if (!name || !sex || !address) throw new Error('Name, sex, and address are required');
   const db = getSupabase();
+  avatarUrl = toStoragePath(avatarUrl);
   const passwordHash = await bcrypt.hash(String(password), 12);
   if (!db) {
     if (fallbackUsers.has(normalized)) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
@@ -57,7 +58,7 @@ async function getUserById(id) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl };
+  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toStoragePath(fields.avatarUrl) };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }
@@ -80,17 +81,41 @@ async function deleteUser(id) {
     }
     return true;
   }
-  const user = await db.from('users').select('avatar_url').eq('id', id).maybeSingle();
+
+  const user = await db.from('users').select('id,avatar_url').eq('id', id).maybeSingle();
   if (user.error) throw user.error;
-  const posts = await db.from('posts').select('image_url').eq('owner_id', id);
-  if (posts.error) throw posts.error;
+  if (!user.data) return false;
+  const [profile, services, posts, notices, lostFound] = await Promise.all([
+    db.from('profiles').select('avatar_url').eq('id', id).maybeSingle(),
+    db.from('services').select('image_url').eq('owner_id', id),
+    db.from('posts').select('image_url').eq('owner_id', id),
+    db.from('notices').select('image_url').eq('owner_id', id),
+    db.from('lost_found').select('image_url').eq('owner_id', id),
+  ]);
+  for (const result of [profile, services, posts, notices, lostFound]) {
+    if (result.error) throw result.error;
+  }
+  const imageUrls = [
+    user.data.avatar_url,
+    profile.data?.avatar_url,
+    ...(services.data || []).map((row) => row.image_url),
+    ...(posts.data || []).map((row) => row.image_url),
+    ...(notices.data || []).map((row) => row.image_url),
+    ...(lostFound.data || []).map((row) => row.image_url),
+  ].filter(Boolean);
+
+  // If Storage cleanup fails, stop before deleting database rows so the user
+  // can retry and no owned files are orphaned by a partial account deletion.
+  await removeImagesByUrls(imageUrls);
+  await removeImagesByPrefixes([`profiles/${id}`, `posts/${id}`]);
+  const [actorNotifications, profileDelete] = await Promise.all([
+    db.from('notifications').delete().eq('actor_id', id).select('id'),
+    db.from('profiles').delete().eq('id', id).select('id'),
+  ]);
+  if (actorNotifications.error) throw actorNotifications.error;
+  if (profileDelete.error) throw profileDelete.error;
   const { data, error } = await db.from('users').delete().eq('id', id).select('id');
   if (error) throw error;
-  if (data?.length) {
-    if (user.data?.avatar_url) await removeImageByUrl(user.data.avatar_url);
-    await Promise.all((posts.data || []).map((post) =>
-      post.image_url ? removeImageByUrl(post.image_url) : null));
-  }
   return Boolean(data?.length);
 }
 

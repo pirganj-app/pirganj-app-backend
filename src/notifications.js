@@ -1,6 +1,7 @@
 const { getSupabase } = require('./supabase');
 const { getUserById } = require('./auth');
 const { sendPushToUser } = require('./push');
+const { toPublicUrl } = require('./storage');
 
 function mapNotification(row) {
   return {
@@ -10,7 +11,7 @@ function mapNotification(row) {
     body: row.body,
     actorId: row.actor_id || null,
     actorName: row.actor_name || null,
-    actorAvatarUrl: row.actor_avatar_url || null,
+    actorAvatarUrl: toPublicUrl(row.actor_avatar_url || null),
     entityType: row.entity_type || null,
     entityId: row.entity_id || null,
     isRead: Boolean(row.is_read),
@@ -60,7 +61,7 @@ async function listNotifications(userId, { limit = 50 } = {}) {
   const actors = new Map(await Promise.all(actorIds.map(async (id) => [id, await getUserById(id)])));
   return (data || []).map((row) => {
     const actor = row.actor_id ? actors.get(row.actor_id) : null;
-    return mapNotification({ ...row, actor_name: actor?.name || null, actor_avatar_url: actor?.avatar_url || null });
+    return mapNotification({ ...row, actor_name: actor?.name || null, actor_avatar_url: toPublicUrl(actor?.avatar_url || null) });
   });
 }
 

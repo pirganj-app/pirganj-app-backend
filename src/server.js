@@ -12,7 +12,7 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/api', api);
 
-app.get('/', (_req, res) => res.json({ success: true, name: 'Pirganj API', version: 'v1' }));
+app.get('/', (_req, res) => res.json({ success: true, name: 'Pirganj API', version: '1.0' }));
 app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(error.status || 500).json({ success: false, data: { message: error.status ? error.message : 'Internal server error' } });

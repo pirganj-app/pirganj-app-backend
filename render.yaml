@@ -13,6 +13,8 @@ services:
         value: "*"
       - key: SUPABASE_URL
         sync: false
+      - key: PUBLIC_API_URL
+        value: https://pirganj-app.onrender.com
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: JWT_SECRET
