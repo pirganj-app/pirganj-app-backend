@@ -52,7 +52,7 @@ async function sendPushToUser(userId, notification, data = {}) {
     tokens,
     notification,
     data: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, String(value ?? '')])),
-    android: { priority: 'high', notification: { channelId: 'pirganj_high_importance', sound: 'default' } },
+    android: { priority: 'high', notification: { channelId: 'pirganj_high_importance', sound: 'default', icon: 'ic_stat_pirganj', color: '#167765' } },
   });
   const invalid = response.responses.map((item, index) => ({ item, token: tokens[index] })).filter(({ item }) => !item.success && ['messaging/registration-token-not-registered', 'messaging/invalid-registration-token'].includes(item.error?.code)).map(({ token }) => token);
   if (invalid.length) await db.from('device_tokens').delete().in('token', invalid);
