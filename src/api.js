@@ -10,6 +10,7 @@ const { registerUser, loginUser, getUserById, updateUser, deleteUser, authentica
 const { MAX_IMAGE_BYTES, uploadImage, downloadImage, toPublicUrl } = require('./storage');
 const { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment } = require('./notifications');
 const { registerDeviceToken, unregisterDeviceToken } = require('./push');
+const { getSupabase } = require('./supabase');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -34,6 +35,13 @@ const broadcastNewContent = async ({ actorId, type, title, body, entityType, ent
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: '1.0' }));
 router.get('/config', (_req, res) => send(res, { app: 'Pirganj', package: 'com.pirganj.app', locale: 'bn-BD' }));
+router.get('/app-open-message', asyncRoute(async (_req, res) => {
+  const db = getSupabase();
+  if (!db) return send(res, { visible: false });
+  const { data, error } = await db.from('apponenmsg').select('id,title,html_content,visible,updated_at').eq('visible', true).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return send(res, data ? { visible: true, id: data.id, title: data.title, html: data.html_content, updatedAt: data.updated_at } : { visible: false });
+}));
 router.get('/media/*', asyncRoute(async (req, res) => { const image = await downloadImage(req.params[0]); res.set('Cache-Control', 'public, max-age=31536000, immutable'); res.type(image.contentType); return res.send(image.buffer); }));
 router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); return send(res, await registerUser({ ...req.body, avatarUrl: uploaded.url }), 201); }));
 router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser(req.body)); }));
@@ -52,10 +60,10 @@ router.delete('/notifications', ...owner(async (req, res) => send(res, { deleted
 router.get('/profile/items', ...owner(async (req, res) => send(res, await getMyItems(req.user.sub))));
 
 router.get('/overview', asyncRoute(async (_req, res) => send(res, await getOverview())));
-router.get('/services', asyncRoute(async (req, res) => send(res, await findServices({ category: req.query.category, search: req.query.search }))));
+router.get('/services', asyncRoute(async (req, res) => send(res, await findServices({ category: req.query.category, search: req.query.search, limit: req.query.limit, offset: req.query.offset }))));
 router.get('/services/:id', asyncRoute(async (req, res) => { const item = await findServiceById(req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); }));
 router.post('/services', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'category']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const item = await addService(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_service', title: 'নতুন স্থানীয় সেবা', body: `${req.body.name} নতুন সেবা হিসেবে যুক্ত হয়েছে`, entityType: 'service', entityId: item.id }); return send(res, item, 201); }));
-router.get('/posts', optionalAuthenticate, asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag, req.user?.sub))));
+router.get('/posts', optionalAuthenticate, asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag, req.user?.sub, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); const item = await addPost({ ...req.body, authorId: req.user.sub, author: user.name }); await broadcastNewContent({ actorId: req.user.sub, type: 'new_post', title: 'নতুন পোস্ট', body: `${user.name} নতুন একটি পোস্ট করেছেন`, entityType: 'post', entityId: item.id }); return send(res, item, 201); }));
 router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
 router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id))));
@@ -66,15 +74,15 @@ router.post('/posts/:id/reactions', ...owner(async (req, res) => { const reactio
 router.get('/posts/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getReactions(req.params.id)))));
 router.post('/comments/:id/reactions', ...owner(async (req, res) => { const reaction = req.body?.reaction || 'like'; const result = await toggleCommentReaction(req.params.id, req.user.sub, reaction); const user = await getUserById(req.user.sub); const commentOwner = await ownerOf('comments', req.params.id); const postId = await postIdOfComment(req.params.id); await createNotification({ userId: commentOwner, actorId: req.user.sub, type: 'reaction', title: 'মন্তব্যে reaction', body: `${user?.name || 'কেউ'} আপনার মন্তব্যে ${reaction} reaction দিয়েছেন`, entityType: 'post', entityId: postId }); return send(res, await enrichReactions(result)); }));
 router.get('/comments/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getCommentReactions(req.params.id)))));
-router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group))));
+router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/donors', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'bloodGroup', 'phone']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const item = await addDonor(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_donor', title: 'নতুন রক্তদাতা', body: `${req.body.name} নতুন রক্তদাতা হিসেবে যুক্ত হয়েছেন`, entityType: 'donor', entityId: item.id }); return send(res, item, 201); }));
-router.get('/notices', asyncRoute(async (_req, res) => send(res, await getNotices())));
+router.get('/notices', asyncRoute(async (req, res) => send(res, await getNotices({ limit: req.query.limit, offset: req.query.offset }))));
 router.post('/notices', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title']); if (missing.length) return send(res, { message: 'title required' }, 400); const item = await addNotice(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_notice', title: 'নতুন নোটিশ', body: req.body.title, entityType: 'notice', entityId: item.id }); return send(res, item, 201); }));
-router.get('/blood-requests', asyncRoute(async (req, res) => send(res, await getBloodRequests(req.query.group))));
+router.get('/blood-requests', asyncRoute(async (req, res) => send(res, await getBloodRequests(req.query.group, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/blood-requests', ...owner(async (req, res) => { const missing = required(req.body || {}, ['patientName', 'bloodGroup', 'hospital', 'phone']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const item = await addBloodRequest(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_blood_request', title: 'জরুরি রক্তের অনুরোধ', body: `${req.body.bloodGroup} রক্ত প্রয়োজন — ${req.body.hospital}`, entityType: 'blood-request', entityId: item.id }); return send(res, item, 201); }));
-router.get('/jobs', asyncRoute(async (_req, res) => send(res, await getJobs())));
+router.get('/jobs', asyncRoute(async (req, res) => send(res, await getJobs({ limit: req.query.limit, offset: req.query.offset }))));
 router.post('/jobs', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title']); if (missing.length) return send(res, { message: 'title required' }, 400); const item = await addJob(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_job', title: 'নতুন চাকরির খবর', body: req.body.title, entityType: 'job', entityId: item.id }); return send(res, item, 201); }));
-router.get('/lost-found', asyncRoute(async (_req, res) => send(res, await getLostFound())));
+router.get('/lost-found', asyncRoute(async (req, res) => send(res, await getLostFound({ limit: req.query.limit, offset: req.query.offset }))));
 router.post('/lost-found', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title']); if (missing.length) return send(res, { message: 'title required' }, 400); const item = await addLostFound(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_lost_found', title: 'নতুন হারানো/পাওয়া তথ্য', body: req.body.title, entityType: 'lost-found', entityId: item.id }); return send(res, item, 201); }));
 router.get('/search', asyncRoute(async (req, res) => send(res, await searchAll(req.query.q || ''))));
 router.get('/admin/summary', asyncRoute(async (_req, res) => send(res, await getAdminSummary())));
