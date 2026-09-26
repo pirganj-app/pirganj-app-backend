@@ -80,8 +80,17 @@ async function deleteUser(id) {
     }
     return true;
   }
+  const user = await db.from('users').select('avatar_url').eq('id', id).maybeSingle();
+  if (user.error) throw user.error;
+  const posts = await db.from('posts').select('image_url').eq('owner_id', id);
+  if (posts.error) throw posts.error;
   const { data, error } = await db.from('users').delete().eq('id', id).select('id');
   if (error) throw error;
+  if (data?.length) {
+    if (user.data?.avatar_url) await removeImageByUrl(user.data.avatar_url);
+    await Promise.all((posts.data || []).map((post) =>
+      post.image_url ? removeImageByUrl(post.image_url) : null));
+  }
   return Boolean(data?.length);
 }
 
