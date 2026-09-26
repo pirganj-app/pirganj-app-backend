@@ -9,6 +9,7 @@ const {
 const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate } = require('./auth');
 const { MAX_IMAGE_BYTES, uploadImage } = require('./storage');
 const { createNotification, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, ownerOf } = require('./notifications');
+const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -38,6 +39,8 @@ router.get('/auth/me', ...owner(async (req, res) => { const user = await getUser
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
 router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));
 router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : 'profiles' }), 201)));
+router.post('/devices/push-token', ...owner(async (req, res) => { const missing = required(req.body || {}, ['token']); if (missing.length) return send(res, { message: 'token required' }, 400); return send(res, await registerDeviceToken(req.user.sub, req.body.token, req.body.platform || 'android'), 201); }));
+router.delete('/devices/push-token', ...owner(async (req, res) => send(res, { deleted: await unregisterDeviceToken(req.user.sub, req.body?.token) })));
 router.get('/notifications', ...owner(async (req, res) => send(res, await listNotifications(req.user.sub, { limit: req.query.limit }))));
 router.get('/notifications/unread-count', ...owner(async (req, res) => send(res, { count: await unreadCount(req.user.sub) })));
 router.put('/notifications/:id/read', ...owner(async (req, res) => send(res, { updated: await markNotificationRead(req.params.id, req.user.sub) })));

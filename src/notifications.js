@@ -1,5 +1,6 @@
 const { getSupabase } = require('./supabase');
 const { getUserById } = require('./auth');
+const { sendPushToUser } = require('./push');
 
 function mapNotification(row) {
   return {
@@ -31,6 +32,11 @@ async function createNotification({ userId, actorId = null, type, title, body, e
     entity_id: entityId || null,
   }).select('*').single();
   if (error) throw error;
+  try {
+    await sendPushToUser(userId, { title, body }, { type, entityType, entityId });
+  } catch (pushError) {
+    console.error('FCM delivery failed:', pushError.message);
+  }
   return mapNotification(data);
 }
 
