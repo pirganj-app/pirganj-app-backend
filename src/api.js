@@ -27,7 +27,7 @@ const parseImage = (field) => (req, res, next) => imageUpload.single(field)(req,
   if (!req.file) return res.status(400).json({ success: false, data: { message: 'Profile picture is required' } });
   return next();
 });
-const enrichReactions = async (reactions) => Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id }; }));
+const enrichReactions = async (reactions) => Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id, userAvatarUrl: user?.avatar_url || null }; }));
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: 'v1' }));
 router.get('/config', (_req, res) => send(res, { app: 'Pirganj', package: 'com.pirganj.app', locale: 'bn-BD' }));
