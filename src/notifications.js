@@ -40,6 +40,16 @@ async function createNotification({ userId, actorId = null, type, title, body, e
   return mapNotification(data);
 }
 
+async function notifyAllUsers({ actorId = null, type, title, body, entityType = null, entityId = null }) {
+  const db = getSupabase();
+  if (!db) return 0;
+  const { data, error } = await db.from('users').select('id').limit(5000);
+  if (error) throw error;
+  const results = await Promise.allSettled((data || []).map((user) =>
+    createNotification({ userId: user.id, actorId, type, title, body, entityType, entityId })));
+  return results.filter((result) => result.status === 'fulfilled' && result.value).length;
+}
+
 async function listNotifications(userId, { limit = 50 } = {}) {
   const db = getSupabase();
   if (!db) return [];
@@ -78,6 +88,22 @@ async function markAllNotificationsRead(userId) {
   return data?.length || 0;
 }
 
+async function deleteNotification(id, userId) {
+  const db = getSupabase();
+  if (!db) return false;
+  const { data, error } = await db.from('notifications').delete().eq('id', id).eq('user_id', userId).select('id');
+  if (error) throw error;
+  return Boolean(data?.length);
+}
+
+async function deleteAllNotifications(userId) {
+  const db = getSupabase();
+  if (!db) return 0;
+  const { data, error } = await db.from('notifications').delete().eq('user_id', userId).select('id');
+  if (error) throw error;
+  return data?.length || 0;
+}
+
 async function ownerOf(table, id) {
   const db = getSupabase();
   if (!db || !id) return null;
@@ -86,4 +112,4 @@ async function ownerOf(table, id) {
   return data?.owner_id || null;
 }
 
-module.exports = { createNotification, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, ownerOf };
+module.exports = { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf };
