@@ -5,7 +5,7 @@ services:
     plan: free
     buildCommand: npm install --omit=dev
     startCommand: npm start
-    healthCheckPath: /api/v1/health
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: 22

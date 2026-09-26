@@ -17,7 +17,7 @@ Authentication, user ownership, edit/delete authorization, rate limiting, pagina
 - **Language:** Plain JavaScript with CommonJS modules
 - **Database:** Supabase PostgreSQL through `@supabase/supabase-js`
 - **Deployment:** Render Web Service
-- **API style:** JSON REST under `/api/v1`
+- **API style:** JSON REST under `/api`
 - **Tests:** Node.js built-in test runner
 - **Client:** Flutter app in the separate `pirganj-app` repository
 
@@ -64,7 +64,7 @@ npm run dev
 The local API base URL is normally:
 
 ```text
-http://localhost:10000/api/v1
+http://localhost:10000/api
 ```
 
 ### Run tests
@@ -107,7 +107,7 @@ https://pirganj-app.onrender.com
 The API prefix is:
 
 ```text
-https://pirganj-app.onrender.com/api/v1
+https://pirganj-app.onrender.com/api
 ```
 
 Successful responses use this shape:
@@ -123,7 +123,7 @@ Validation and server errors use a similar envelope with `success: false`. The h
 
 ## REST endpoints
 
-All routes below are relative to `/api/v1`.
+All routes below are relative to `/api`.
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -156,19 +156,19 @@ All routes below are relative to `/api/v1`.
 Health check:
 
 ```bash
-curl https://pirganj-app.onrender.com/api/v1/health
+curl https://pirganj-app.onrender.com/api/health
 ```
 
 Read donors by blood group:
 
 ```bash
-curl "https://pirganj-app.onrender.com/api/v1/donors?group=O%2B"
+curl "https://pirganj-app.onrender.com/api/donors?group=O%2B"
 ```
 
 Create a post:
 
 ```bash
-curl -X POST https://pirganj-app.onrender.com/api/v1/posts \
+curl -X POST https://pirganj-app.onrender.com/api/posts \
   -H 'Content-Type: application/json' \
   -d '{
     "author": "পীরগঞ্জবাসী",
@@ -181,7 +181,7 @@ curl -X POST https://pirganj-app.onrender.com/api/v1/posts \
 Create a blood request:
 
 ```bash
-curl -X POST https://pirganj-app.onrender.com/api/v1/blood-requests \
+curl -X POST https://pirganj-app.onrender.com/api/blood-requests \
   -H 'Content-Type: application/json' \
   -d '{
     "patientName": "রোগীর নাম",
@@ -210,7 +210,7 @@ If Supabase is not configured, the service automatically uses a small in-memory 
 4. Set the build command to `npm install --omit=dev`.
 5. Set the start command to `npm start`.
 6. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as secret environment variables.
-7. Keep the health check path as `/api/v1/health`.
+7. Keep the health check path as `/api/health`.
 8. Confirm that the deployed URL responds before connecting the Flutter client.
 
 The included `render.yaml` contains the same service configuration and uses Node.js 22.
@@ -228,7 +228,7 @@ The next major backend extensions are Google/Supabase authentication, user owner
 ## Related repositories
 
 - [Flutter mobile app](https://github.com/pirganj-app/pirganj-app)
-- [Live API health endpoint](https://pirganj-app.onrender.com/api/v1/health)
+- [Live API health endpoint](https://pirganj-app.onrender.com/api/health)
 
 ## License and contribution
 
@@ -262,6 +262,6 @@ The API now requires an authenticated account for every create, update, and dele
 
 Run the migration in [`supabase/schema_auth_ownership.sql`](supabase/schema_auth_ownership.sql) before enabling the production account flow. It creates the `users` table, stores the profile fields, adds `owner_id` to user-created resources, adds indexes, and blocks anonymous direct table access. The backend uses the Supabase service-role key and checks `owner_id` server-side, so a user can only edit or delete records that they created.
 
-New account endpoints are `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `PUT /api/v1/auth/me`, and `GET /api/v1/profile/items`. Owned records can be changed or removed through `PUT /api/v1/profile/items/:resource/:id` and `DELETE /api/v1/profile/items/:resource/:id`. Send `Authorization: Bearer <token>` with all protected requests. Public read endpoints remain available. Donor and blood-request reads accept `?group=সব`, `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, or `O-`.
+New account endpoints are `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `PUT /api/auth/me`, and `GET /api/profile/items`. Owned records can be changed or removed through `PUT /api/profile/items/:resource/:id` and `DELETE /api/profile/items/:resource/:id`. Send `Authorization: Bearer <token>` with all protected requests. Public read endpoints remain available. Donor and blood-request reads accept `?group=সব`, `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, or `O-`.
 
 Required production environment variables are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and a strong `JWT_SECRET`. Existing rows created before this migration have `owner_id = NULL`; they remain readable but cannot be edited or deleted by normal accounts until an administrator assigns ownership.
