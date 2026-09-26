@@ -112,4 +112,12 @@ async function ownerOf(table, id) {
   return data?.owner_id || null;
 }
 
-module.exports = { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf };
+async function postIdOfComment(id) {
+  const db = getSupabase();
+  if (!db || !id) return null;
+  const { data, error } = await db.from('comments').select('post_id').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data?.post_id || null;
+}
+
+module.exports = { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment };
