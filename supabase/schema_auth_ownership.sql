@@ -45,6 +45,19 @@ create table if not exists public.comment_reactions (
   unique(comment_id, user_id)
 );
 
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  actor_id uuid references public.users(id) on delete set null,
+  type text not null default 'general',
+  title text not null,
+  body text not null,
+  entity_type text,
+  entity_id uuid,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists services_owner_id_idx on public.services(owner_id);
 create index if not exists posts_owner_id_idx on public.posts(owner_id);
 create index if not exists donors_owner_id_idx on public.donors(owner_id);
@@ -55,6 +68,8 @@ create index if not exists lost_found_owner_id_idx on public.lost_found(owner_id
 create index if not exists comments_owner_id_idx on public.comments(owner_id);
 create index if not exists post_reactions_post_id_idx on public.post_reactions(post_id);
 create index if not exists comment_reactions_comment_id_idx on public.comment_reactions(comment_id);
+create index if not exists notifications_user_created_idx on public.notifications(user_id, created_at desc);
+create index if not exists notifications_user_unread_idx on public.notifications(user_id, is_read) where is_read = false;
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
@@ -78,7 +93,7 @@ create policy users_no_anon_access on public.users for all to anon using (false)
 do $$
 declare t text;
 begin
-  foreach t in array array['services','posts','donors','blood_requests','notices','jobs','lost_found','comments','post_reactions','comment_reactions'] loop
+  foreach t in array array['services','posts','donors','blood_requests','notices','jobs','lost_found','comments','post_reactions','comment_reactions','notifications'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I on public.%I', t || '_no_anon_access', t);
     execute format('create policy %I on public.%I for all to anon using (false) with check (false)', t || '_no_anon_access', t);
