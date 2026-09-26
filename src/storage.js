@@ -3,7 +3,7 @@ const path = require('path');
 const { getSupabase } = require('./supabase');
 const BUCKET = process.env.SUPABASE_IMAGE_BUCKET || 'pirganj-images';
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
-const PUBLIC_API_URL = (process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 10000}`).replace(/\/+$/, '');
+const PUBLIC_API_URL = (process.env.PUBLIC_API_URL || 'https://pirganj-app.onrender.com').replace(/\/+$/, '');
 const MEDIA_MARKER = '/api/media/';
 const STORAGE_MARKERS = [
   `/${['storage', 'v1', 'object', 'public', BUCKET].join('/')}/`,
