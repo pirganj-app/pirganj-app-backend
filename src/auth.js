@@ -121,7 +121,7 @@ async function deleteUser(id) {
   // If Storage cleanup fails, stop before deleting database rows so the user
   // can retry and no owned files are orphaned by a partial account deletion.
   await removeImagesByUrls(imageUrls);
-  await removeImagesByPrefixes([`profiles/${id}`, `posts/${id}`]);
+  await removeImagesByPrefixes([`profiles/${id}`, `posts/${id}`, `lost_found/${id}`]);
   const [actorNotifications, profileDelete] = await Promise.all([
     db.from('notifications').delete().eq('actor_id', id).select('id'),
     db.from('profiles').delete().eq('id', id).select('id'),
