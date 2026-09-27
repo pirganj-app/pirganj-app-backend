@@ -57,6 +57,20 @@ async function getUserById(id) {
   return data;
 }
 
+async function getUsersByIds(ids) {
+  const uniqueIds = [...new Set((ids || []).filter(Boolean).map(String))];
+  if (!uniqueIds.length) return new Map();
+  const db = getSupabase();
+  if (!db) {
+    return new Map([...fallbackUsers.values()]
+      .filter((user) => uniqueIds.includes(String(user.id)))
+      .map((user) => [String(user.id), user]));
+  }
+  const { data, error } = await db.from('users').select('*').in('id', uniqueIds);
+  if (error) throw error;
+  return new Map((data || []).map((user) => [String(user.id), user]));
+}
+
 async function updateUser(id, fields) {
   const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl) };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
@@ -141,4 +155,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, registerUser, loginUser, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };

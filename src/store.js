@@ -1,5 +1,5 @@
 const { getSupabase } = require('./supabase');
-const { rememberFallbackItem, getFallbackItem, deleteFallbackItem, getUserById } = require('./auth');
+const { rememberFallbackItem, getFallbackItem, deleteFallbackItem, getUserById, getUsersByIds } = require('./auth');
 const { removeImageByUrl, toStoragePath, toPublicUrl, toDatabaseUrl } = require('./storage');
 
 const seedServices = [
@@ -40,18 +40,43 @@ async function findPosts(tag, viewerId = null, { limit = 20, offset = 0 } = {}) 
   let query = client().from('posts').select('*').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (tag && tag !== 'সব') query = query.eq('tag', tag);
   const { data, error } = await query; if (error) throw error;
-  return Promise.all((data || []).map(async (row) => {
+  const rows = data || [];
+  const postIds = rows.map((row) => row.id).filter(Boolean);
+  const ownerIds = rows.map((row) => row.owner_id).filter(Boolean);
+  const [authors, reactionRows, commentRows] = await Promise.all([
+    getUsersByIds(ownerIds).catch(() => new Map()),
+    postIds.length
+      ? client().from('post_reactions').select('post_id,user_id,reaction').in('post_id', postIds)
+          .then((result) => result.error ? [] : (result.data || [])).catch(() => [])
+      : [],
+    postIds.length
+      ? client().from('comments').select('post_id').in('post_id', postIds)
+          .then((result) => result.error ? [] : (result.data || [])).catch(() => [])
+      : [],
+  ]);
+  const reactionsByPost = new Map();
+  for (const reaction of reactionRows) {
+    const list = reactionsByPost.get(String(reaction.post_id)) || [];
+    list.push(reaction);
+    reactionsByPost.set(String(reaction.post_id), list);
+  }
+  const commentsByPost = new Map();
+  for (const comment of commentRows) {
+    const key = String(comment.post_id);
+    commentsByPost.set(key, (commentsByPost.get(key) || 0) + 1);
+  }
+  return rows.map((row) => {
     const post = mapPost(row);
     if (row.owner_id) {
-      try {
-        const author = await getUserById(row.owner_id);
-        post.authorAvatarUrl = toPublicUrl(author?.avatar_url || null);
-      } catch (_) {}
+      const author = authors.get(String(row.owner_id));
+      post.authorAvatarUrl = toPublicUrl(author?.avatar_url || null);
     }
-    try { const reactions = await client().from('post_reactions').select('user_id,reaction', { count: 'exact' }).eq('post_id', row.id); if (!reactions.error) { post.likes = reactions.count || 0; if (viewerId) post.myReaction = (reactions.data || []).find((item) => item.user_id === viewerId)?.reaction || null; } } catch (_) {}
-    try { const comments = await client().from('comments').select('id', { count: 'exact', head: true }).eq('post_id', row.id); if (!comments.error) post.comments = comments.count || 0; } catch (_) {}
+    const reactions = reactionsByPost.get(String(row.id)) || [];
+    post.likes = reactions.length;
+    if (viewerId) post.myReaction = reactions.find((item) => item.user_id === viewerId)?.reaction || null;
+    post.comments = commentsByPost.get(String(row.id)) || 0;
     return post;
-  }));
+  });
 }
 
 async function addPost({ author, title, body, tag, imageUrl = null, authorId = null }) { const createdAt = new Date().toISOString(); const storedImageUrl = toDatabaseUrl(imageUrl); if (!hasDatabase()) return remember({ id: `p${Date.now()}`, author, tag, title, body, imageUrl: storedImageUrl, likes: 0, comments: 0, status: 'approved', createdAt }, authorId); const { data, error } = await client().from('posts').insert({ author_name: author, owner_id: authorId, title, body, tag, image_url: storedImageUrl || null, status: 'approved' }).select('*').single(); if (error) throw error; return mapPost(data); }
