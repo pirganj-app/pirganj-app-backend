@@ -1,10 +1,12 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const multer = require('multer');
 const {
   findServices, findServiceById, findPosts, addPost, addService, addDonor, addBloodRequest,
   addNotice, addJob, addLostFound, toggleLike, getComments, addComment, getDonors,
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
-  getMyItems, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
+  getMyItems, getPublicProfile, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
 const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate } = require('./auth');
 const { MAX_IMAGE_BYTES, uploadImage, downloadImage, toPublicUrl } = require('./storage');
@@ -42,13 +44,22 @@ router.get('/app-open-message', asyncRoute(async (_req, res) => {
   if (error) throw error;
   return send(res, data ? { visible: true, id: data.id, title: data.title, html: data.html_content, updatedAt: data.updated_at } : { visible: false });
 }));
+router.get('/about', asyncRoute(async (_req, res) => {
+  const file = path.join(__dirname, '..', 'about.html');
+  const html = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  return send(res, { html });
+}));
+router.get('/users/:id/public', asyncRoute(async (req, res) => {
+  const profile = await getPublicProfile(req.params.id);
+  return profile ? send(res, profile) : send(res, { message: 'Profile not found' }, 404);
+}));
 router.get('/media/*', asyncRoute(async (req, res) => { const image = await downloadImage(req.params[0]); res.set('Cache-Control', 'public, max-age=31536000, immutable'); res.type(image.contentType); return res.send(image.buffer); }));
 router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); return send(res, await registerUser({ ...req.body, avatarUrl: uploaded.url }), 201); }));
 router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser(req.body)); }));
 router.get('/auth/me', ...owner(async (req, res) => { const user = await getUserById(req.user.sub); return user ? send(res, { user: { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || null) } }) : send(res, { message: 'User not found' }, 404); }));
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
 router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));
-router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : 'profiles' }), 201)));
+router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : req.body?.kind === 'lost_found' ? 'lost_found' : 'profiles' }), 201)));
 router.post('/devices/push-token', ...owner(async (req, res) => { const missing = required(req.body || {}, ['token']); if (missing.length) return send(res, { message: 'token required' }, 400); return send(res, await registerDeviceToken(req.user.sub, req.body.token, req.body.platform || 'android'), 201); }));
 router.delete('/devices/push-token', ...owner(async (req, res) => send(res, { deleted: await unregisterDeviceToken(req.user.sub, req.body?.token) })));
 router.get('/notifications', ...owner(async (req, res) => send(res, await listNotifications(req.user.sub, { limit: req.query.limit }))));
