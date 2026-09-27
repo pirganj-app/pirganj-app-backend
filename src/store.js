@@ -142,7 +142,7 @@ async function getPublicProfile(ownerId) {
   const user = await getUserById(ownerId);
   if (!user) return null;
   const locked = user.profile_locked === true || user.profileLocked === true;
-  if (locked) return { user: { id: user.id, name: user.name, sex: '', address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: true }, items: [] };
+  if (locked) return { user: { id: user.id, name: user.name, sex: user.sex || '', address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: true }, items: [] };
   const items = await getMyItems(ownerId);
   const safeItems = items.map((item) => {
     const { phone, contactPhone, ...safe } = item;
