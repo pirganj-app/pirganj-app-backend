@@ -16,7 +16,7 @@ function signUser(user) {
 }
 
 function publicUser(user) {
-  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null) };
+  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: user.profile_locked === true || user.profileLocked === true };
 }
 
 async function registerUser({ phone, password, name, sex, address, avatarUrl }) {
@@ -29,7 +29,7 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
   const passwordHash = await bcrypt.hash(String(password), 12);
   if (!db) {
     if (fallbackUsers.has(normalized)) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
-    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null };
+    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null, profile_locked: false };
     fallbackUsers.set(normalized, user);
     return { token: signUser(user), user: publicUser(user) };
   }
@@ -72,7 +72,7 @@ async function getUsersByIds(ids) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl) };
+  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl), profile_locked: fields.profileLocked === undefined ? undefined : Boolean(fields.profileLocked) };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }
