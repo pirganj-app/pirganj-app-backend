@@ -12,7 +12,7 @@ function normalizePhone(phone) {
 }
 
 function signUser(user) {
-  return jwt.sign({ sub: user.id, phone: user.phone }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ sub: user.id, phone: user.phone, profileLocked: user.profile_locked === true || user.profileLocked === true }, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function publicUser(user) {
@@ -157,4 +157,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, registerUser, loginUser, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, publicUser, registerUser, loginUser, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
