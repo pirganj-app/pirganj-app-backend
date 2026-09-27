@@ -21,7 +21,7 @@ function publicUser(user) {
 
 async function registerUser({ phone, password, name, sex, address, avatarUrl }) {
   const normalized = normalizePhone(phone);
-  if (!/^\+?[0-9]{8,15}$/.test(normalized)) throw new Error('A valid phone number is required');
+  if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
   if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
   if (!name || !sex || !address) throw new Error('Name, sex, and address are required');
   const db = getSupabase();
@@ -43,6 +43,7 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
 
 async function loginUser({ phone, password }) {
   const normalized = normalizePhone(phone);
+  if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
   const db = getSupabase();
   const user = db ? (await db.from('users').select('*').eq('phone', normalized).maybeSingle()).data : fallbackUsers.get(normalized);
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) { const error = new Error('Phone number or password is incorrect'); error.status = 401; throw error; }
@@ -72,7 +73,7 @@ async function getUsersByIds(ids) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name, sex: fields.sex, address: fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl), profile_locked: fields.profileLocked === undefined ? undefined : Boolean(fields.profileLocked) };
+  const allowed = { name: fields.name == null ? undefined : fields.name, sex: fields.sex == null ? undefined : fields.sex, address: fields.address == null ? undefined : fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl), profile_locked: fields.profileLocked === undefined ? undefined : Boolean(fields.profileLocked) };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }
