@@ -73,7 +73,8 @@ async function getUsersByIds(ids) {
 }
 
 async function updateUser(id, fields) {
-  const allowed = { name: fields.name == null ? undefined : fields.name, sex: fields.sex == null ? undefined : fields.sex, address: fields.address == null ? undefined : fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl), profile_locked: fields.profileLocked === undefined ? undefined : Boolean(fields.profileLocked) };
+  const requestedLock = fields.profileLocked === undefined ? fields.profile_locked : fields.profileLocked;
+  const allowed = { name: fields.name == null ? undefined : fields.name, sex: fields.sex == null ? undefined : fields.sex, address: fields.address == null ? undefined : fields.address, avatar_url: fields.avatarUrl === undefined ? undefined : toDatabaseUrl(fields.avatarUrl), profile_locked: requestedLock === undefined ? undefined : requestedLock === true || requestedLock === 'true' };
   const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
   const db = getSupabase();
   if (!db) { const user = await getUserById(id); if (!user) return null; Object.assign(user, clean); return publicUser(user); }
