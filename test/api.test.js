@@ -61,10 +61,18 @@ test('account deletion removes the fallback user and every owned item', async ()
 
 test('device is locked after five failed login attempts', async () => {
   const phone = `017${Date.now().toString().slice(-8)}`;
+  const email = `${phone}@example.com`;
   const deviceId = `test-device-${Date.now()}`;
-  await registerUser({ email: `${phone}@example.com`, phone, password: 'secret123', name: 'Lock Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
+  await registerUser({ email, phone, password: 'secret123', name: 'Lock Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    await assert.rejects(() => loginUser({ phone, password: 'wrong-password', deviceId }), { status: 401 });
+    await assert.rejects(() => loginUser({ email, password: 'wrong-password', deviceId }), { status: 401 });
   }
-  await assert.rejects(() => loginUser({ phone, password: 'secret123', deviceId }), { status: 429 });
+  await assert.rejects(() => loginUser({ email, password: 'secret123', deviceId }), { status: 429 });
+});
+
+test('unregistered email cannot log in', async () => {
+  await assert.rejects(
+    () => loginUser({ email: `missing-${Date.now()}@example.com`, password: 'secret123', deviceId: `unknown-email-${Date.now()}` }),
+    { status: 401 },
+  );
 });

@@ -80,15 +80,14 @@ function recordLoginFailure(deviceId) {
 
 function clearLoginFailures(deviceId) { loginFailures.delete(deviceKey(deviceId)); }
 
-async function loginUser({ email, phone, password, deviceId }) {
+async function loginUser({ email, password, deviceId }) {
   assertDeviceNotLocked(deviceId);
   const normalizedEmail = normalizeEmail(email);
-  const normalizedPhone = normalizePhone(phone);
-  if (!normalizedEmail && !/^\d{11}$/.test(normalizedPhone)) throw new Error('A valid email address is required');
+  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error('A valid email address is required');
   const db = getSupabase();
   const user = db
-    ? (await db.from('users').select('*').eq(normalizedEmail ? 'email' : 'phone', normalizedEmail || normalizedPhone).maybeSingle()).data
-    : [...fallbackUsers.values()].find((item) => normalizedEmail ? item.email === normalizedEmail : item.phone === normalizedPhone);
+    ? (await db.from('users').select('*').eq('email', normalizedEmail).maybeSingle()).data
+    : [...fallbackUsers.values()].find((item) => item.email === normalizedEmail);
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
     recordLoginFailure(deviceId);
     const error = new Error('Email or password is incorrect');
@@ -119,13 +118,18 @@ async function getSupabaseGoogleUser(accessToken) {
 }
 
 async function loginWithGoogle(accessToken) {
-  const { db, phone, email, providerId, defaultName, defaultAvatar } = await getSupabaseGoogleUser(accessToken);
-  const existing = await db.from('users').select('*').eq('phone', phone).maybeSingle();
+  const { db, email } = await getSupabaseGoogleUser(accessToken);
+  if (!email) {
+    const error = new Error('Google email is not registered');
+    error.status = 401;
+    throw error;
+  }
+  const existing = await db.from('users').select('*').eq('email', email).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) return { token: signUser(existing.data), user: publicUser(existing.data) };
-  const created = await db.from('users').insert({ email, phone, password_hash: `supabase-google:${providerId}`, name: defaultName, sex: 'অন্যান্য', address: '', avatar_url: defaultAvatar }).select('*').single();
-  if (created.error) throw created.error;
-  return { token: signUser(created.data), user: publicUser(created.data) };
+  const error = new Error('Google email is not registered');
+  error.status = 401;
+  throw error;
 }
 
 async function completeGoogleRegistration({ accessToken, phone, password, name, sex, address, avatarUrl }) {
