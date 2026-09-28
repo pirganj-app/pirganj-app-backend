@@ -1,7 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
-const { getFirebase } = require('./push');
 const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toDatabaseUrl, toPublicUrl } = require('./storage');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
@@ -91,28 +90,29 @@ async function loginUser({ phone, password, deviceId }) {
   return { token: signUser(user), user: publicUser(user) };
 }
 
-async function loginWithGoogle(idToken) {
-  const firebase = getFirebase();
-  if (!firebase) {
-    const error = new Error('Google login server configuration is missing');
+async function loginWithGoogle(accessToken) {
+  const db = getSupabase();
+  if (!db) {
+    const error = new Error('Supabase Auth server configuration is missing');
     error.status = 503;
     throw error;
   }
-  const decoded = await firebase.auth().verifyIdToken(String(idToken || ''));
-  const phone = `google:${decoded.uid}`;
-  const db = getSupabase();
-  if (!db) {
-    let user = fallbackUsers.get(phone);
-    if (!user) {
-      user = { id: `google-${decoded.uid}`, phone, password_hash: '', name: decoded.name || decoded.email || 'Google User', sex: 'অন্যান্য', address: '', avatar_url: decoded.picture || null, profile_locked: false };
-      fallbackUsers.set(phone, user);
-    }
-    return { token: signUser(user), user: publicUser(user) };
+  const { data: authData, error: authError } = await db.auth.getUser(String(accessToken || ''));
+  if (authError || !authData?.user) {
+    const error = new Error('Google login token is invalid or expired');
+    error.status = 401;
+    throw error;
   }
+  const decoded = authData.user;
+  const providerId = decoded.id;
+  const metadata = decoded.user_metadata || {};
+  const phone = `google:${providerId}`;
+  const name = metadata.full_name || metadata.name || decoded.email || 'Google User';
+  const avatar = metadata.avatar_url || metadata.picture || null;
   const existing = await db.from('users').select('*').eq('phone', phone).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) return { token: signUser(existing.data), user: publicUser(existing.data) };
-  const created = await db.from('users').insert({ phone, password_hash: `google:${decoded.uid}`, name: decoded.name || decoded.email || 'Google User', sex: 'অন্যান্য', address: '', avatar_url: decoded.picture || null }).select('*').single();
+  const created = await db.from('users').insert({ phone, password_hash: `supabase-google:${providerId}`, name, sex: 'অন্যান্য', address: '', avatar_url: avatar }).select('*').single();
   if (created.error) throw created.error;
   return { token: signUser(created.data), user: publicUser(created.data) };
 }
