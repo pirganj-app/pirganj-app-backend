@@ -48,7 +48,7 @@ test('storage URLs are exposed without the legacy API segment', () => {
 
 test('account deletion removes the fallback user and every owned item', async () => {
   const phone = `017${Date.now().toString().slice(-8)}`;
-  const result = await registerUser({ phone, password: 'secret123', name: 'Delete Test', sex: 'পুরুষ', address: 'পীরগঞ্জ', avatarUrl: 'profiles/delete-test.jpg' });
+  const result = await registerUser({ email: `${phone}@example.com`, phone, password: 'secret123', name: 'Delete Test', sex: 'পুরুষ', address: 'পীরগঞ্জ', avatarUrl: 'profiles/delete-test.jpg' });
   const userId = result.user.id;
   await store.addPost({ author: 'Delete Test', title: 'Owned post', body: 'Will be deleted', tag: 'খবর', authorId: userId, imageUrl: 'posts/delete-test.jpg' });
   assert.ok(await getUserById(userId));
@@ -62,7 +62,7 @@ test('account deletion removes the fallback user and every owned item', async ()
 test('device is locked after five failed login attempts', async () => {
   const phone = `017${Date.now().toString().slice(-8)}`;
   const deviceId = `test-device-${Date.now()}`;
-  await registerUser({ phone, password: 'secret123', name: 'Lock Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
+  await registerUser({ email: `${phone}@example.com`, phone, password: 'secret123', name: 'Lock Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await assert.rejects(() => loginUser({ phone, password: 'wrong-password', deviceId }), { status: 401 });
   }

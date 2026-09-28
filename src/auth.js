@@ -14,15 +14,21 @@ function normalizePhone(phone) {
   return String(phone || '').replace(/[\s()-]/g, '').trim();
 }
 
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
 function signUser(user) {
   return jwt.sign({ sub: user.id, phone: user.phone, profileLocked: user.profile_locked === true || user.profileLocked === true }, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function publicUser(user) {
-  return { id: user.id, phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: user.profile_locked === true || user.profileLocked === true };
+  return { id: user.id, email: user.email || '', phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: user.profile_locked === true || user.profileLocked === true };
 }
 
-async function registerUser({ phone, password, name, sex, address, avatarUrl }) {
+async function registerUser({ email, phone, password, name, sex, address, avatarUrl }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error('A valid email address is required');
   const normalized = normalizePhone(phone);
   if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
   if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
@@ -32,14 +38,14 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
   const passwordHash = await bcrypt.hash(String(password), 12);
   if (!db) {
     if (fallbackUsers.has(normalized)) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
-    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null, profile_locked: false };
+    const user = { id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`, email: normalizedEmail, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null, profile_locked: false };
     fallbackUsers.set(normalized, user);
     return { token: signUser(user), user: publicUser(user) };
   }
-  const existing = await db.from('users').select('id').eq('phone', normalized).maybeSingle();
+  const existing = await db.from('users').select('id').or(`phone.eq.${normalized},email.eq.${normalizedEmail}`).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) { const error = new Error('Phone number is already registered'); error.status = 409; throw error; }
-  const { data, error } = await db.from('users').insert({ phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null }).select('*').single();
+  const { data, error } = await db.from('users').insert({ email: normalizedEmail, phone: normalized, password_hash: passwordHash, name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: avatarUrl || null }).select('*').single();
   if (error) throw error;
   return { token: signUser(data), user: publicUser(data) };
 }
@@ -74,15 +80,18 @@ function recordLoginFailure(deviceId) {
 
 function clearLoginFailures(deviceId) { loginFailures.delete(deviceKey(deviceId)); }
 
-async function loginUser({ phone, password, deviceId }) {
+async function loginUser({ email, phone, password, deviceId }) {
   assertDeviceNotLocked(deviceId);
-  const normalized = normalizePhone(phone);
-  if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedEmail && !/^\d{11}$/.test(normalizedPhone)) throw new Error('A valid email address is required');
   const db = getSupabase();
-  const user = db ? (await db.from('users').select('*').eq('phone', normalized).maybeSingle()).data : fallbackUsers.get(normalized);
+  const user = db
+    ? (await db.from('users').select('*').eq(normalizedEmail ? 'email' : 'phone', normalizedEmail || normalizedPhone).maybeSingle()).data
+    : [...fallbackUsers.values()].find((item) => normalizedEmail ? item.email === normalizedEmail : item.phone === normalizedPhone);
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
     recordLoginFailure(deviceId);
-    const error = new Error('Phone number or password is incorrect');
+    const error = new Error('Email or password is incorrect');
     error.status = 401;
     throw error;
   }
@@ -90,7 +99,7 @@ async function loginUser({ phone, password, deviceId }) {
   return { token: signUser(user), user: publicUser(user) };
 }
 
-async function loginWithGoogle(accessToken) {
+async function getSupabaseGoogleUser(accessToken) {
   const db = getSupabase();
   if (!db) {
     const error = new Error('Supabase Auth server configuration is missing');
@@ -106,13 +115,29 @@ async function loginWithGoogle(accessToken) {
   const decoded = authData.user;
   const providerId = decoded.id;
   const metadata = decoded.user_metadata || {};
-  const phone = `google:${providerId}`;
-  const name = metadata.full_name || metadata.name || decoded.email || 'Google User';
-  const avatar = metadata.avatar_url || metadata.picture || null;
+  return { db, decoded, providerId, metadata, phone: `google:${providerId}`, email: normalizeEmail(decoded.email), defaultName: metadata.full_name || metadata.name || decoded.email || 'Google User', defaultAvatar: metadata.avatar_url || metadata.picture || null };
+}
+
+async function loginWithGoogle(accessToken) {
+  const { db, phone, email, providerId, defaultName, defaultAvatar } = await getSupabaseGoogleUser(accessToken);
   const existing = await db.from('users').select('*').eq('phone', phone).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) return { token: signUser(existing.data), user: publicUser(existing.data) };
-  const created = await db.from('users').insert({ phone, password_hash: `supabase-google:${providerId}`, name, sex: 'অন্যান্য', address: '', avatar_url: avatar }).select('*').single();
+  const created = await db.from('users').insert({ email, phone, password_hash: `supabase-google:${providerId}`, name: defaultName, sex: 'অন্যান্য', address: '', avatar_url: defaultAvatar }).select('*').single();
+  if (created.error) throw created.error;
+  return { token: signUser(created.data), user: publicUser(created.data) };
+}
+
+async function completeGoogleRegistration({ accessToken, phone, password, name, sex, address, avatarUrl }) {
+  const google = await getSupabaseGoogleUser(accessToken);
+  const normalized = normalizePhone(phone);
+  if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
+  if (!password || String(password).length < 6) throw new Error('Password must be at least 6 characters');
+  if (!name || !sex || !address) throw new Error('Name, sex, and address are required');
+  const existing = await google.db.from('users').select('id').or(`phone.eq.${normalized},email.eq.${google.email}`).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) { const error = new Error('Email or phone number is already registered'); error.status = 409; throw error; }
+  const created = await google.db.from('users').insert({ email: google.email, phone: normalized, password_hash: await bcrypt.hash(String(password), 12), name: String(name).trim(), sex: String(sex).trim(), address: String(address).trim(), avatar_url: toDatabaseUrl(avatarUrl) || google.defaultAvatar }).select('*').single();
   if (created.error) throw created.error;
   return { token: signUser(created.data), user: publicUser(created.data) };
 }
@@ -224,4 +249,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, publicUser, registerUser, loginUser, loginWithGoogle, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, normalizeEmail, publicUser, registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
