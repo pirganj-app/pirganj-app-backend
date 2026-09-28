@@ -8,11 +8,12 @@ const {
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
   getMyItems, getPublicProfile, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
-const { registerUser, loginUser, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate, publicUser } = require('./auth');
+const { registerUser, loginUser, loginWithGoogle, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate, publicUser } = require('./auth');
 const { MAX_IMAGE_BYTES, uploadImage, downloadImage, toPublicUrl } = require('./storage');
 const { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment } = require('./notifications');
 const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 const { getSupabase } = require('./supabase');
+const { getVersionPayload } = require('./config');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -36,6 +37,7 @@ const enrichReactions = async (reactions) => Promise.all(reactions.map(async (it
 const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => notifyAllUsers({ actorId, type, title, body, entityType, entityId });
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: '1.0' }));
+router.get('/version', asyncRoute(async (_req, res) => send(res, await getVersionPayload())));
 router.get('/config', (_req, res) => send(res, { app: 'Pirganj', package: 'com.pirganj.app', locale: 'bn-BD' }));
 router.get('/app-open-message', asyncRoute(async (_req, res) => {
   const db = getSupabase();
@@ -55,7 +57,8 @@ router.get('/users/:id/public', asyncRoute(async (req, res) => {
 }));
 router.get('/media/*', asyncRoute(async (req, res) => { const image = await downloadImage(req.params[0]); res.set('Cache-Control', 'public, max-age=31536000, immutable'); res.type(image.contentType); return res.send(image.buffer); }));
 router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); return send(res, await registerUser({ ...req.body, avatarUrl: uploaded.url }), 201); }));
-router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser(req.body)); }));
+router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['phone', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser({ ...req.body, deviceId: req.headers['x-device-id'] })); }));
+router.post('/auth/google', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['idToken']); if (missing.length) return send(res, { message: 'idToken required' }, 400); return send(res, await loginWithGoogle(req.body.idToken)); }));
 router.get('/auth/me', ...owner(async (req, res) => { const user = await getUserById(req.user.sub); return user ? send(res, { user: publicUser(user) }) : send(res, { message: 'User not found' }, 404); }));
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
 router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));

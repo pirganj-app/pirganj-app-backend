@@ -58,4 +58,4 @@ async function sendPushToUser(userId, notification, data = {}) {
   if (invalid.length) await db.from('device_tokens').delete().in('token', invalid);
 }
 
-module.exports = { registerDeviceToken, unregisterDeviceToken, sendPushToUser };
+module.exports = { getFirebase, registerDeviceToken, unregisterDeviceToken, sendPushToUser };

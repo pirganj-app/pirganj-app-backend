@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 const app = require('../src/server');
 const store = require('../src/store');
 const { toStoragePath, toPublicUrl, toDatabaseUrl } = require('../src/storage');
-const { registerUser, getUserById, deleteUser } = require('../src/auth');
+const { registerUser, loginUser, getUserById, deleteUser } = require('../src/auth');
+const { APP_VERSION, APK_DOWNLOAD_URL } = require('../src/config');
+
+test('backend version contract is pinned to the current app release', () => {
+  assert.equal(APP_VERSION, '1.0.0');
+  assert.equal(APK_DOWNLOAD_URL, 'https://pirganj-app.netlify.app/apk');
+});
 
 test('store falls back to seed data when Supabase is not configured', async () => {
   delete process.env.SUPABASE_URL;
@@ -51,4 +57,14 @@ test('account deletion removes the fallback user and every owned item', async ()
   assert.equal(await getUserById(userId), null);
   assert.equal((await store.getMyItems(userId)).length, 0);
   assert.equal(await deleteUser(userId), false);
+});
+
+test('device is locked after five failed login attempts', async () => {
+  const phone = `017${Date.now().toString().slice(-8)}`;
+  const deviceId = `test-device-${Date.now()}`;
+  await registerUser({ phone, password: 'secret123', name: 'Lock Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assert.rejects(() => loginUser({ phone, password: 'wrong-password', deviceId }), { status: 401 });
+  }
+  await assert.rejects(() => loginUser({ phone, password: 'secret123', deviceId }), { status: 429 });
 });

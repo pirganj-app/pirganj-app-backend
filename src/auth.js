@@ -1,11 +1,15 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
+const { getFirebase } = require('./push');
 const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toDatabaseUrl, toPublicUrl } = require('./storage');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 2 * 60 * 60 * 1000;
 const fallbackUsers = new Map();
 const fallbackItems = new Map();
+const loginFailures = new Map();
 
 function normalizePhone(phone) {
   return String(phone || '').replace(/[\s()-]/g, '').trim();
@@ -41,13 +45,76 @@ async function registerUser({ phone, password, name, sex, address, avatarUrl }) 
   return { token: signUser(data), user: publicUser(data) };
 }
 
-async function loginUser({ phone, password }) {
+function deviceKey(deviceId) {
+  return String(deviceId || 'unknown-device').trim().slice(0, 160) || 'unknown-device';
+}
+
+function assertDeviceNotLocked(deviceId) {
+  const key = deviceKey(deviceId);
+  const state = loginFailures.get(key);
+  if (!state) return;
+  if (!state.lockedUntil) return;
+  if (state.lockedUntil > Date.now()) {
+    const error = new Error('এই ডিভাইসে ২ ঘণ্টার জন্য login বন্ধ আছে');
+    error.status = 429;
+    error.retryAfterSeconds = Math.ceil((state.lockedUntil - Date.now()) / 1000);
+    throw error;
+  }
+  loginFailures.delete(key);
+}
+
+function recordLoginFailure(deviceId) {
+  const key = deviceKey(deviceId);
+  const previous = loginFailures.get(key) || { attempts: 0, lockedUntil: 0 };
+  const attempts = previous.attempts + 1;
+  loginFailures.set(key, {
+    attempts,
+    lockedUntil: attempts >= MAX_LOGIN_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : 0,
+  });
+}
+
+function clearLoginFailures(deviceId) { loginFailures.delete(deviceKey(deviceId)); }
+
+async function loginUser({ phone, password, deviceId }) {
+  assertDeviceNotLocked(deviceId);
   const normalized = normalizePhone(phone);
   if (!/^\d{11}$/.test(normalized)) throw new Error('Phone number must be exactly 11 digits');
   const db = getSupabase();
   const user = db ? (await db.from('users').select('*').eq('phone', normalized).maybeSingle()).data : fallbackUsers.get(normalized);
-  if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) { const error = new Error('Phone number or password is incorrect'); error.status = 401; throw error; }
+  if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
+    recordLoginFailure(deviceId);
+    const error = new Error('Phone number or password is incorrect');
+    error.status = 401;
+    throw error;
+  }
+  clearLoginFailures(deviceId);
   return { token: signUser(user), user: publicUser(user) };
+}
+
+async function loginWithGoogle(idToken) {
+  const firebase = getFirebase();
+  if (!firebase) {
+    const error = new Error('Google login server configuration is missing');
+    error.status = 503;
+    throw error;
+  }
+  const decoded = await firebase.auth().verifyIdToken(String(idToken || ''));
+  const phone = `google:${decoded.uid}`;
+  const db = getSupabase();
+  if (!db) {
+    let user = fallbackUsers.get(phone);
+    if (!user) {
+      user = { id: `google-${decoded.uid}`, phone, password_hash: '', name: decoded.name || decoded.email || 'Google User', sex: 'অন্যান্য', address: '', avatar_url: decoded.picture || null, profile_locked: false };
+      fallbackUsers.set(phone, user);
+    }
+    return { token: signUser(user), user: publicUser(user) };
+  }
+  const existing = await db.from('users').select('*').eq('phone', phone).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return { token: signUser(existing.data), user: publicUser(existing.data) };
+  const created = await db.from('users').insert({ phone, password_hash: `google:${decoded.uid}`, name: decoded.name || decoded.email || 'Google User', sex: 'অন্যান্য', address: '', avatar_url: decoded.picture || null }).select('*').single();
+  if (created.error) throw created.error;
+  return { token: signUser(created.data), user: publicUser(created.data) };
 }
 
 async function getUserById(id) {
@@ -157,4 +224,4 @@ function rememberFallbackItem(item) {
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
 
-module.exports = { normalizePhone, publicUser, registerUser, loginUser, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, publicUser, registerUser, loginUser, loginWithGoogle, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
