@@ -45,19 +45,22 @@ async function findServices({ category, search, limit = 20, offset = 0 } = {}) {
   }
   let query = client().from('services').select('id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (category && category !== 'সব') query = query.eq('category', category);
-  if (term) query = query.or(`name.ilike.%${term}%,category.ilike.%${term}%,location.ilike.%${term}%`);
+  if (term) query = query.textSearch('search_vector', term, { config: 'simple', type: 'websearch' });
   const { data, error } = await query;
   if (error) throw error;
   return (data || []).map(mapService);
 }
 async function findServiceById(id) { if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null; const { data, error } = await client().from('services').select('id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at').eq('id', id).eq('status', 'approved').maybeSingle(); if (error) throw error; return data ? mapService(data) : null; }
-async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, search = '' } = {}) {
+async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, before = null, search = '' } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0);
   if (!hasDatabase()) { const term = String(search || '').trim().toLowerCase(); const filtered = seedPosts.filter((item) => (!tag || tag === 'সব' || item.tag === tag) && (!term || `${item.title} ${item.body} ${item.tag}`.toLowerCase().includes(term))); return filtered.slice(safeOffset, safeOffset + safeLimit); }
-  let query = client().from('posts').select('id,author_name,tag,title,body,image_url,likes_count,comments_count,shares_count,status,owner_id,created_at').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  let query = client().from('posts').select('id,author_name,tag,title,body,image_url,likes_count,comments_count,shares_count,status,owner_id,created_at').eq('status', 'approved').order('created_at', { ascending: false });
+  if (before) query = query.lt('created_at', String(before));
+  else query = query.range(safeOffset, safeOffset + safeLimit - 1);
+  query = query.limit(safeLimit);
   if (tag && tag !== 'সব') query = query.eq('tag', tag);
   const searchTerm = String(search || '').trim().replace(/[,%()]/g, ' ');
-  if (searchTerm) query = query.or(`title.ilike.%${searchTerm}%,body.ilike.%${searchTerm}%,tag.ilike.%${searchTerm}%`);
+  if (searchTerm) query = query.textSearch('search_vector', searchTerm, { config: 'simple', type: 'websearch' });
   const { data, error } = await query; if (error) throw error;
   const rows = data || [];
   const postIds = rows.map((row) => row.id).filter(Boolean);

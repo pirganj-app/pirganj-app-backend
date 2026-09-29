@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const api = require('./api');
 const { getVersionPayload } = require('./config');
+const { cleanupOldNotifications } = require('./notifications');
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be configured in production');
@@ -64,7 +65,13 @@ app.use((error, _req, res, _next) => {
 });
 
 if (require.main === module) {
-  app.listen(port, '0.0.0.0', () => console.log(`Pirganj Express API listening on port ${port}`));
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Pirganj Express API listening on port ${port}`);
+    void cleanupOldNotifications().catch((error) => console.error('Notification cleanup failed:', error.message));
+    setInterval(() => {
+      void cleanupOldNotifications().catch((error) => console.error('Notification cleanup failed:', error.message));
+    }, 24 * 60 * 60 * 1000).unref();
+  });
 }
 
 module.exports = app;

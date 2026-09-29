@@ -4,6 +4,7 @@ const { getSupabase } = require('./supabase');
 const BUCKET = process.env.SUPABASE_IMAGE_BUCKET || 'pirganj-images';
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const PUBLIC_API_URL = (process.env.PUBLIC_API_URL || 'https://pirganj-app.onrender.com').replace(/\/+$/, '');
+const MEDIA_CDN_URL = String(process.env.MEDIA_CDN_URL || '').replace(/\/+$/, '');
 const MEDIA_MARKER = '/api/media/';
 const STORAGE_MARKERS = [
   `/${['storage', 'v1', 'object', 'public', BUCKET].join('/')}/`,
@@ -50,7 +51,8 @@ function toPublicUrl(value) {
   if (value === undefined || value === null || value === '') return value;
   const storagePath = toStoragePath(value);
   if (/^https?:\/\//i.test(storagePath) && !String(value).includes(MEDIA_MARKER)) return storagePath;
-  return `${PUBLIC_API_URL}/api/media/${encodeURIComponent(storagePath).replace(/%2F/g, '/')}`;
+  const base = MEDIA_CDN_URL || PUBLIC_API_URL;
+  return `${base}/api/media/${encodeURIComponent(storagePath).replace(/%2F/g, '/')}`;
 }
 
 function toDatabaseUrl(value) {

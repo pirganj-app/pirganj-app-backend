@@ -98,6 +98,15 @@ async function unreadCount(userId) {
   return count || 0;
 }
 
+async function cleanupOldNotifications() {
+  const db = getSupabase();
+  if (!db) return 0;
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db.from('notifications').delete().lt('created_at', cutoff).select('id');
+  if (error) throw error;
+  return (data || []).length;
+}
+
 async function markNotificationRead(id, userId) {
   const db = getSupabase();
   if (!db) return false;
@@ -146,4 +155,4 @@ async function postIdOfComment(id) {
   return data?.post_id || null;
 }
 
-module.exports = { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment };
+module.exports = { createNotification, notifyAllUsers, listNotifications, unreadCount, cleanupOldNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment };
