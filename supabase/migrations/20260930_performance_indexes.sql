@@ -13,8 +13,6 @@ create index if not exists notices_status_created_idx on public.notices(status, 
 create index if not exists jobs_status_created_idx on public.jobs(status, created_at desc);
 create index if not exists lost_found_status_created_idx on public.lost_found(status, created_at desc);
 create index if not exists comments_post_created_idx on public.comments(post_id, created_at desc);
-create index if not exists comment_reactions_comment_user_idx on public.comment_reactions(comment_id, user_id);
-create index if not exists post_reactions_post_user_idx on public.post_reactions(post_id, user_id);
 
 -- Trigram indexes make the service search endpoint scale better than a full scan.
 create extension if not exists pg_trgm;
