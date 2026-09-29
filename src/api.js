@@ -42,6 +42,7 @@ const enrichReactions = async (reactions) => {
   });
 };
 const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => {
+  if (entityType !== 'lost-found') return 0;
   try {
     // Persist in-app notifications before returning the create response. Push
     // delivery remains detached inside notifyAllUsers, so FCM cannot slow writes.
