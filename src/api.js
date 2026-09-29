@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const {
-  findServices, findServiceById, findPosts, addPost, addService, addDonor, addBloodRequest,
+  findServices, findServiceById, findPosts, findPostById, addPost, addService, addDonor, addBloodRequest,
   addNotice, addJob, addLostFound, toggleLike, getComments, addComment, getDonors,
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
   getMyItems, getPublicProfile, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
@@ -107,6 +107,7 @@ router.get('/services', asyncRoute(async (req, res) => send(res, await findServi
 router.get('/services/:id', asyncRoute(async (req, res) => { const item = await findServiceById(req.params.id); return item ? send(res, item) : send(res, { message: 'Service not found' }, 404); }));
 router.post('/services', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'category']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const item = await addService(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_service', title: 'নতুন স্থানীয় সেবা', body: `${req.body.name} নতুন সেবা হিসেবে যুক্ত হয়েছে`, entityType: 'service', entityId: item.id }); return send(res, item, 201); }));
 router.get('/posts', optionalAuthenticate, asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag, req.user?.sub, { limit: req.query.limit, offset: req.query.offset, before: req.query.before }))));
+router.get('/posts/:id', optionalAuthenticate, asyncRoute(async (req, res) => { const post = await findPostById(req.params.id, req.user?.sub); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
 router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); const item = await addPost({ ...req.body, authorId: req.user.sub, author: user.name }); await broadcastNewContent({ actorId: req.user.sub, type: 'new_post', title: 'নতুন পোস্ট', body: `${user.name} নতুন একটি পোস্ট করেছেন`, entityType: 'post', entityId: item.id }); return send(res, item, 201); }));
 router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
 router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id, { limit: req.query.limit, offset: req.query.offset }))));
