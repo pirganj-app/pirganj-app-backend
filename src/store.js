@@ -32,7 +32,21 @@ function mapJob(row) { return { id: row.id, title: row.title, company: row.compa
 function mapLostFound(row) { return { id: row.id, type: row.item_type, title: row.title, description: row.description || '', location: row.location || '', contactPhone: row.contact_phone || '', imageUrl: toPublicUrl(row.image_url || ''), ownerId: row.owner_id || null }; }
 function remember(item, ownerId) { if (ownerId && item?.id) { const saved = { ...item, ownerId }; fallbackOwned.set(String(item.id), saved); rememberFallbackItem(saved); } return item; }
 
-async function findServices({ category, search, limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); if (!hasDatabase()) { const filtered = seedServices.filter((item) => (!category || category === 'সব' || item.category === category) && (!search || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(String(search).toLowerCase()))); return filtered.slice(safeOffset, safeOffset + safeLimit); } let query = client().from('services').select('*').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1); if (category && category !== 'সব') query = query.eq('category', category); const { data, error } = await query; if (error) throw error; const term = String(search || '').toLowerCase(); return (data || []).map(mapService).filter((item) => !term || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(term)); }
+async function findServices({ category, search, limit = 20, offset = 0 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const term = String(search || '').trim().replace(/[,%]/g, ' ');
+  if (!hasDatabase()) {
+    const filtered = seedServices.filter((item) => (!category || category === 'সব' || item.category === category) && (!term || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(term.toLowerCase())));
+    return filtered.slice(safeOffset, safeOffset + safeLimit);
+  }
+  let query = client().from('services').select('id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  if (category && category !== 'সব') query = query.eq('category', category);
+  if (term) query = query.or(`name.ilike.%${term}%,category.ilike.%${term}%,location.ilike.%${term}%`);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapService);
+}
 async function findServiceById(id) { if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null; const { data, error } = await client().from('services').select('*').eq('id', id).eq('status', 'approved').maybeSingle(); if (error) throw error; return data ? mapService(data) : null; }
 async function findPosts(tag, viewerId = null, { limit = 20, offset = 0 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0);
@@ -91,34 +105,124 @@ async function insertMapped(table, row, mapper = (value) => value, ownerId = nul
 
 async function toggleLike(id) { if (!hasDatabase()) { const post = seedPosts.find((item) => item.id === id); if (!post) return null; post.likes += 1; return post; } const db = client(); const current = await db.from('posts').select('likes_count').eq('id', id).maybeSingle(); if (current.error) throw current.error; if (!current.data) return null; const updated = await db.from('posts').update({ likes_count: (current.data.likes_count || 0) + 1 }).eq('id', id).select('*').single(); if (updated.error) throw updated.error; return mapPost(updated.data); }
  function mapComment(row) { return { id: row.id, author: row.author_name, body: row.body, createdAt: row.created_at || null, ownerId: row.owner_id || row.author_id || null, authorAvatarUrl: toPublicUrl(row.author_avatar_url || null), parentId: row.parent_id || null }; }
-async function getComments(postId) { if (!hasDatabase()) { const rows = [...fallbackComments.values()].filter((item) => item.postId === postId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))); const authors = new Map(rows.map((item) => [String(item.id), item.author])); return Promise.all(rows.map(async (item) => { const user = item.ownerId ? await getUserById(item.ownerId) : null; return { ...item, authorAvatarUrl: toPublicUrl(user?.avatar_url || null), replyToAuthor: item.parentId ? authors.get(String(item.parentId)) : null, reactions: await enrichReactionUsers(await getCommentReactions(item.id)) }; })); } const { data, error } = await client().from('comments').select('*').eq('post_id', postId).order('created_at', { ascending: false }); if (error) throw error; const rows = data || []; const authors = new Map(rows.map((row) => [String(row.id), row.author_name])); return Promise.all(rows.map(async (row) => { const user = row.owner_id ? await getUserById(row.owner_id) : null; return { ...mapComment(row), authorAvatarUrl: toPublicUrl(user?.avatar_url || null), replyToAuthor: row.parent_id ? authors.get(String(row.parent_id)) : null, reactions: await enrichReactionUsers(await getCommentReactions(row.id)) }; })); }
+async function getComments(postId) {
+  let rows;
+  if (!hasDatabase()) {
+    rows = [...fallbackComments.values()].filter((item) => item.postId === postId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const authors = new Map(rows.map((item) => [String(item.id), item.author]));
+    const users = await getUsersByIds(rows.map((item) => item.ownerId));
+    return rows.map((item) => {
+      const user = users.get(String(item.ownerId));
+      const reactions = [...fallbackCommentReactions.values()].filter((reaction) => reaction.commentId === item.id).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      return { ...item, authorAvatarUrl: toPublicUrl(user?.avatar_url || null), replyToAuthor: item.parentId ? authors.get(String(item.parentId)) : null, reactions };
+    });
+  }
+  const result = await client().from('comments').select('id,post_id,author_name,owner_id,body,parent_id,created_at').eq('post_id', postId).order('created_at', { ascending: false });
+  if (result.error) throw result.error;
+  rows = result.data || [];
+  const ids = rows.map((row) => row.id).filter(Boolean);
+  const authors = new Map(rows.map((row) => [String(row.id), row.author_name]));
+  const reactionResult = ids.length ? await client().from('comment_reactions').select('comment_id,user_id,reaction,created_at').in('comment_id', ids).order('created_at', { ascending: false }) : { data: [], error: null };
+  if (reactionResult.error) throw reactionResult.error;
+  const reactionsByComment = new Map();
+  for (const reaction of reactionResult.data || []) {
+    const key = String(reaction.comment_id);
+    reactionsByComment.set(key, [...(reactionsByComment.get(key) || []), mapReaction(reaction)]);
+  }
+  const users = await getUsersByIds([...rows.map((row) => row.owner_id), ...(reactionResult.data || []).map((row) => row.user_id)]);
+  return rows.map((row) => {
+    const user = users.get(String(row.owner_id));
+    const reactions = reactionsByComment.get(String(row.id)) || [];
+    return { ...mapComment(row), authorAvatarUrl: toPublicUrl(user?.avatar_url || row.author_avatar_url || null), replyToAuthor: row.parent_id ? authors.get(String(row.parent_id)) : null, reactions: reactions.map((item) => { const reactionUser = users.get(String(item.userId)); return { ...item, userName: reactionUser?.name || item.userId, userAvatarUrl: toPublicUrl(reactionUser?.avatar_url || null) }; }) };
+  });
+}
 async function addComment(postId, { author, body, authorId = null, parentId = null }) { const createdAt = new Date().toISOString(); if (!hasDatabase()) { const comment = { id: `comment-${Date.now()}-${Math.random().toString(36).slice(2)}`, postId, author: author || 'পীরগঞ্জবাসী', body, createdAt, ownerId: authorId, parentId }; fallbackComments.set(comment.id, comment); const enriched = await getComments(postId); return enriched.find((item) => String(item.id) === String(comment.id)) || comment; } const row = { post_id: postId, author_name: author || 'পীরগঞ্জবাসী', owner_id: authorId, body }; if (parentId) row.parent_id = parentId; const { data, error } = await client().from('comments').insert(row).select('*').single(); if (error) throw error; const enriched = await getComments(postId); return enriched.find((item) => String(item.id) === String(data.id)) || mapComment(data); }
 async function updateComment(id, ownerId, body) { if (!hasDatabase()) { const item = fallbackComments.get(String(id)); if (!item || item.ownerId !== ownerId) return null; item.body = body; return item; } const { data, error } = await client().from('comments').update({ body }).eq('id', id).eq('owner_id', ownerId).select('*').maybeSingle(); if (error) throw error; return data ? mapComment(data) : null; }
 async function deleteComment(id, ownerId) { if (!hasDatabase()) { const item = fallbackComments.get(String(id)); if (!item || item.ownerId !== ownerId) return false; fallbackComments.delete(String(id)); return true; } const { data, error } = await client().from('comments').delete().eq('id', id).eq('owner_id', ownerId).select('id'); if (error) throw error; return Boolean(data?.length); }
 function mapReaction(row) { return { userId: row.user_id || row.userId, reaction: row.reaction || 'like', createdAt: row.created_at || null }; }
 async function toggleReaction(postId, userId, reaction = 'like') {
-  if (!hasDatabase()) { const key = `${postId}:${userId}`; const current = fallbackReactions.get(key); if (current && current.reaction === reaction) fallbackReactions.delete(key); else fallbackReactions.set(key, { postId, userId, reaction, createdAt: new Date().toISOString() }); return getReactions(postId); }
-  const db = client(); const existing = await db.from('post_reactions').select('id,reaction').eq('post_id', postId).eq('user_id', userId).maybeSingle(); if (existing.error) throw existing.error;
-  if (existing.data && existing.data.reaction === reaction) { const removed = await db.from('post_reactions').delete().eq('id', existing.data.id); if (removed.error) throw removed.error; }
-  else if (existing.data) { const updated = await db.from('post_reactions').update({ reaction }).eq('id', existing.data.id); if (updated.error) throw updated.error; }
-  else { const added = await db.from('post_reactions').insert({ post_id: postId, user_id: userId, reaction }); if (added.error) throw added.error; }
-  return getReactions(postId);
+  let change;
+  if (!hasDatabase()) {
+    const key = `${postId}:${userId}`;
+    const current = fallbackReactions.get(key);
+    if (current && current.reaction === reaction) {
+      fallbackReactions.delete(key);
+      change = 'removed';
+    } else if (current) {
+      fallbackReactions.set(key, { ...current, reaction, createdAt: new Date().toISOString() });
+      change = 'changed';
+    } else {
+      fallbackReactions.set(key, { postId, userId, reaction, createdAt: new Date().toISOString() });
+      change = 'added';
+    }
+    return { reactions: await getReactions(postId), change };
+  }
+  const db = client();
+  const existing = await db.from('post_reactions').select('id,reaction').eq('post_id', postId).eq('user_id', userId).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data && existing.data.reaction === reaction) {
+    const removed = await db.from('post_reactions').delete().eq('id', existing.data.id);
+    if (removed.error) throw removed.error;
+    change = 'removed';
+  } else if (existing.data) {
+    const updated = await db.from('post_reactions').update({ reaction }).eq('id', existing.data.id);
+    if (updated.error) throw updated.error;
+    change = 'changed';
+  } else {
+    const added = await db.from('post_reactions').insert({ post_id: postId, user_id: userId, reaction });
+    if (added.error) throw added.error;
+    change = 'added';
+  }
+  return { reactions: await getReactions(postId), change };
 }
+
 async function getReactions(postId) { if (!hasDatabase()) return [...fallbackReactions.values()].filter((item) => item.postId === postId).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).map((item) => ({ userId: item.userId, reaction: item.reaction, createdAt: item.createdAt || null })); const { data, error } = await client().from('post_reactions').select('user_id,reaction,created_at').eq('post_id', postId).order('created_at', { ascending: false }); if (error) throw error; return (data || []).map(mapReaction); }
 async function enrichReactionUsers(list) {
-  return Promise.all(list.map(async (item) => {
-    const user = await getUserById(item.userId || item.user_id);
-    return { ...item, userName: user?.name || item.userId || item.user_id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
-  }));
+  const users = await getUsersByIds((list || []).map((item) => item.userId || item.user_id));
+  return (list || []).map((item) => {
+    const id = item.userId || item.user_id;
+    const user = users.get(String(id));
+    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
+  });
 }
 
 async function getCommentReactions(commentId) { if (!hasDatabase()) return [...fallbackCommentReactions.values()].filter((item) => item.commentId === commentId).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).map((item) => ({ userId: item.userId, reaction: item.reaction, createdAt: item.createdAt || null })); const { data, error } = await client().from('comment_reactions').select('user_id,reaction,created_at').eq('comment_id', commentId).order('created_at', { ascending: false }); if (error) throw error; return (data || []).map(mapReaction); }
 async function toggleCommentReaction(commentId, userId, reaction = 'like') {
-  if (!hasDatabase()) { const key = `${commentId}:${userId}`; const current = fallbackCommentReactions.get(key); if (current && current.reaction === reaction) fallbackCommentReactions.delete(key); else fallbackCommentReactions.set(key, { commentId, userId, reaction, createdAt: new Date().toISOString() }); return getCommentReactions(commentId); }
-  const db = client(); const existing = await db.from('comment_reactions').select('id,reaction').eq('comment_id', commentId).eq('user_id', userId).maybeSingle(); if (existing.error) throw existing.error;
-  if (existing.data && existing.data.reaction === reaction) { const removed = await db.from('comment_reactions').delete().eq('id', existing.data.id); if (removed.error) throw removed.error; } else if (existing.data) { const updated = await db.from('comment_reactions').update({ reaction }).eq('id', existing.data.id); if (updated.error) throw updated.error; } else { const added = await db.from('comment_reactions').insert({ comment_id: commentId, user_id: userId, reaction }); if (added.error) throw added.error; }
-  return getCommentReactions(commentId);
+  let change;
+  if (!hasDatabase()) {
+    const key = `${commentId}:${userId}`;
+    const current = fallbackCommentReactions.get(key);
+    if (current && current.reaction === reaction) {
+      fallbackCommentReactions.delete(key);
+      change = 'removed';
+    } else if (current) {
+      fallbackCommentReactions.set(key, { ...current, reaction, createdAt: new Date().toISOString() });
+      change = 'changed';
+    } else {
+      fallbackCommentReactions.set(key, { commentId, userId, reaction, createdAt: new Date().toISOString() });
+      change = 'added';
+    }
+    return { reactions: await getCommentReactions(commentId), change };
+  }
+  const db = client();
+  const existing = await db.from('comment_reactions').select('id,reaction').eq('comment_id', commentId).eq('user_id', userId).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data && existing.data.reaction === reaction) {
+    const removed = await db.from('comment_reactions').delete().eq('id', existing.data.id);
+    if (removed.error) throw removed.error;
+    change = 'removed';
+  } else if (existing.data) {
+    const updated = await db.from('comment_reactions').update({ reaction }).eq('id', existing.data.id);
+    if (updated.error) throw updated.error;
+    change = 'changed';
+  } else {
+    const added = await db.from('comment_reactions').insert({ comment_id: commentId, user_id: userId, reaction });
+    if (added.error) throw added.error;
+    change = 'added';
+  }
+  return { reactions: await getCommentReactions(commentId), change };
 }
+
 async function getDonors(group, { limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); if (!hasDatabase()) return seedDonors.filter((item) => !group || group === 'সব' || item.group === group).slice(safeOffset, safeOffset + safeLimit); let query = client().from('donors').select('*').eq('available', true).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1); if (group && group !== 'সব') query = query.eq('blood_group', group); const { data, error } = await query; if (error) throw error; return (data || []).map(mapDonor); }
 async function getBloodRequests(group, { limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); if (!hasDatabase()) return seedPosts.filter((post) => post.tag === 'জরুরি' && (!group || group === 'সব' || post.title.includes(group))).slice(safeOffset, safeOffset + safeLimit); let query = client().from('blood_requests').select('*').eq('status', 'open').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1); if (group && group !== 'সব') query = query.eq('blood_group', group); const { data, error } = await query; if (error) throw error; return (data || []).map((row) => ({ id: row.id, patientName: row.patient_name, group: row.blood_group, hospital: row.hospital, area: row.area || '', phone: row.contact_phone || '', details: row.details || '', units: row.units || 1, ownerId: row.owner_id || null })); }
 async function getNotices({ limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); return hasDatabase() ? queryRows('notices', 'status', 'published', mapNotice, { limit: safeLimit, offset: safeOffset }) : seedNotices.slice(safeOffset, safeOffset + safeLimit); }
@@ -137,7 +241,17 @@ async function getOverview() { const [services, posts, donors, notices] = await 
 async function getAdminSummary() { if (!hasDatabase()) return { pending: 0, members: 0, reports: 0, services: seedServices.length }; const db = client(); const [pending, serviceRows, profiles] = await Promise.all([db.from('posts').select('id', { count: 'exact', head: true }).eq('status', 'pending'), db.from('services').select('id', { count: 'exact', head: true }), db.from('users').select('id', { count: 'exact', head: true })]); if (pending.error || serviceRows.error || profiles.error) throw pending.error || serviceRows.error || profiles.error; return { pending: pending.count || 0, members: profiles.count || 0, reports: 0, services: serviceRows.count || 0 }; }
 
 const tableMap = { services: mapService, posts: mapPost, donors: mapDonor, blood_requests: (row) => ({ id: row.id, patientName: row.patient_name, group: row.blood_group, hospital: row.hospital, area: row.area || '', phone: row.contact_phone || '', details: row.details || '', units: row.units || 1, ownerId: row.owner_id || null }), notices: mapNotice, jobs: mapJob, lost_found: mapLostFound };
-async function getMyItems(ownerId) { if (!hasDatabase()) return (await getUserById(ownerId)) ? [...fallbackOwned.values()].filter((item) => item.ownerId === ownerId) : []; const db = client(); const result = []; for (const [table, mapper] of Object.entries(tableMap)) { if (table === 'posts') { const posts = await findPosts(undefined, ownerId, { limit: 50, offset: 0 }); result.push(...posts.filter((item) => String(item.ownerId) === String(ownerId)).map((item) => ({ ...item, resource: table }))); continue; } const { data, error } = await db.from(table).select('*').eq('owner_id', ownerId).order('created_at', { ascending: false }); if (error) throw error; result.push(...(data || []).map((row) => ({ ...mapper(row), resource: table }))); } return result; }
+async function getMyItems(ownerId) {
+  if (!hasDatabase()) return (await getUserById(ownerId)) ? [...fallbackOwned.values()].filter((item) => item.ownerId === ownerId) : [];
+  const db = client();
+  const entries = Object.entries(tableMap);
+  const rows = await Promise.all(entries.map(async ([table, mapper]) => {
+    const result = await db.from(table).select('*').eq('owner_id', ownerId).order('created_at', { ascending: false }).limit(100);
+    if (result.error) throw result.error;
+    return (result.data || []).map((row) => ({ ...mapper(row), resource: table }));
+  }));
+  return rows.flat();
+}
 async function getPublicProfile(ownerId) {
   const user = await getUserById(ownerId);
   if (!user) return null;

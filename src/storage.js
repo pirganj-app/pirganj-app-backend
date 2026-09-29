@@ -10,18 +10,26 @@ const STORAGE_MARKERS = [
   `/storage/object/public/${BUCKET}/`,
   MEDIA_MARKER,
 ];
+let bucketReady = null;
 
-async function ensureBucket(db) {
-  const listed = await db.storage.listBuckets();
-  if (listed.error) throw listed.error;
-  if (!(listed.data || []).some((bucket) => bucket.name === BUCKET)) {
-    const created = await db.storage.createBucket(BUCKET, {
-      public: true,
-      fileSizeLimit: `${MAX_IMAGE_BYTES}`,
-      allowedMimeTypes: ['image/*'],
-    });
-    if (created.error && !/already exists/i.test(created.error.message || '')) throw created.error;
-  }
+function ensureBucket(db) {
+  if (bucketReady) return bucketReady;
+  bucketReady = (async () => {
+    const listed = await db.storage.listBuckets();
+    if (listed.error) throw listed.error;
+    if (!(listed.data || []).some((bucket) => bucket.name === BUCKET)) {
+      const created = await db.storage.createBucket(BUCKET, {
+        public: true,
+        fileSizeLimit: `${MAX_IMAGE_BYTES}`,
+        allowedMimeTypes: ['image/*'],
+      });
+      if (created.error && !/already exists/i.test(created.error.message || '')) throw created.error;
+    }
+  })().catch((error) => {
+    bucketReady = null;
+    throw error;
+  });
+  return bucketReady;
 }
 
 function extension(mimetype, originalname = '') {
@@ -56,18 +64,26 @@ async function uploadImage({ buffer, mimetype, originalname, userId, kind }) {
   if (!String(mimetype || '').startsWith('image/')) throw Object.assign(new Error('Only image files are allowed'), { status: 415 });
   const db = getSupabase();
   if (!db) throw Object.assign(new Error('Supabase Storage is not configured'), { status: 503 });
+  const safeKind = ['profiles', 'posts', 'lost_found'].includes(kind) ? kind : 'profiles';
+  const safeUserId = String(userId || 'anonymous').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'anonymous';
   await ensureBucket(db);
-  const filePath = `${kind}/${userId}/${Date.now()}-${crypto.randomUUID()}${extension(mimetype, originalname)}`;
+  const filePath = `${safeKind}/${safeUserId}/${Date.now()}-${crypto.randomUUID()}${extension(mimetype, originalname)}`;
   const result = await db.storage.from(BUCKET).upload(filePath, buffer, { contentType: mimetype, upsert: false, cacheControl: '31536000' });
   if (result.error) throw result.error;
   return { path: filePath, url: toDatabaseUrl(filePath) };
+}
+
+function assertSafeImagePath(filePath) {
+  if (!filePath || /^https?:\/\//i.test(filePath) || filePath.includes('..') || filePath.startsWith('/') || !/^(profiles|posts|lost_found)\/[^/]+\/[^/]+\.[a-z0-9]+$/i.test(filePath)) {
+    throw Object.assign(new Error('Invalid image path'), { status: 400 });
+  }
 }
 
 async function downloadImage(value) {
   const db = getSupabase();
   if (!db) throw Object.assign(new Error('Supabase Storage is not configured'), { status: 503 });
   const filePath = toStoragePath(value);
-  if (!filePath || /^https?:\/\//i.test(filePath)) throw Object.assign(new Error('Invalid image path'), { status: 400 });
+  assertSafeImagePath(filePath);
   const result = await db.storage.from(BUCKET).download(filePath);
   if (result.error) throw result.error;
   return { buffer: Buffer.from(await result.data.arrayBuffer()), contentType: result.data.type || 'application/octet-stream' };

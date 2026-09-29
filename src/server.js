@@ -1,17 +1,53 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
+const helmet = require('helmet');
+const { rateLimit } = require('express-rate-limit');
 const api = require('./api');
 const { getVersionPayload } = require('./config');
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured in production');
+}
+
 const app = express();
 const port = Number(process.env.PORT || 10000);
+const configuredOrigins = String(process.env.CORS_ORIGINS || '*')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || configuredOrigins.includes('*') || configuredOrigins.includes(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  maxAge: 86400,
+};
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health' || req.path === '/version',
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
 
-// Mobile clients use bearer tokens, so wildcard CORS is safe for this API surface.
-app.use(cors({ origin: process.env.CORS_ORIGINS || '*' }));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use('/api', api);
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(compression());
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+app.use('/api/auth', authLimiter);
+app.use('/api', apiLimiter, api);
 app.get('/version', async (_req, res, next) => {
   try { return res.json({ success: true, data: await getVersionPayload() }); } catch (error) { return next(error); }
 });

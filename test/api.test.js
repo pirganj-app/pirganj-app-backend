@@ -76,3 +76,16 @@ test('unregistered email cannot log in', async () => {
     { status: 401 },
   );
 });
+
+test('reaction toggle reports add, change and remove without duplicate add state', async () => {
+  const phone = `018${Date.now().toString().slice(-8)}`;
+  const account = await registerUser({ email: `${phone}@example.com`, phone, password: 'secret123', name: 'Reaction Test', sex: 'পুরুষ', address: 'পীরগঞ্জ' });
+  const post = await store.addPost({ author: account.user.name, title: 'Reaction test', body: 'Test', tag: 'খবর', authorId: account.user.id });
+  const added = await store.toggleReaction(post.id, account.user.id, 'like');
+  const changed = await store.toggleReaction(post.id, account.user.id, 'love');
+  const removed = await store.toggleReaction(post.id, account.user.id, 'love');
+  assert.equal(added.change, 'added');
+  assert.equal(changed.change, 'changed');
+  assert.equal(removed.change, 'removed');
+  assert.equal(removed.reactions.length, 0);
+});

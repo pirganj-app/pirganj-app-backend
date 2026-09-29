@@ -1,5 +1,5 @@
 const { getSupabase } = require('./supabase');
-const { getUserById } = require('./auth');
+const { getUsersByIds } = require('./auth');
 const { sendPushToUser } = require('./push');
 const { toPublicUrl } = require('./storage');
 
@@ -19,7 +19,7 @@ function mapNotification(row) {
   };
 }
 
-async function createNotification({ userId, actorId = null, type, title, body, entityType = null, entityId = null }) {
+async function createNotification({ userId, actorId = null, type, title, body, entityType = null, entityId = null, sendPush = true }) {
   if (!userId || userId === actorId) return null;
   const db = getSupabase();
   if (!db) return null;
@@ -31,12 +31,14 @@ async function createNotification({ userId, actorId = null, type, title, body, e
     body,
     entity_type: entityType,
     entity_id: entityId || null,
-  }).select('*').single();
+  }).select('id,user_id,actor_id,type,title,body,entity_type,entity_id,is_read,created_at').single();
   if (error) throw error;
-  try {
-    await sendPushToUser(userId, { title, body }, { type, entityType, entityId });
-  } catch (pushError) {
-    console.error('FCM delivery failed:', pushError.message);
+  if (sendPush) {
+    try {
+      await sendPushToUser(userId, { title, body }, { type, entityType, entityId });
+    } catch (pushError) {
+      console.error('FCM delivery failed:', pushError.message);
+    }
   }
   return mapNotification(data);
 }
@@ -44,24 +46,47 @@ async function createNotification({ userId, actorId = null, type, title, body, e
 async function notifyAllUsers({ actorId = null, type, title, body, entityType = null, entityId = null }) {
   const db = getSupabase();
   if (!db) return 0;
-  const { data, error } = await db.from('users').select('id').limit(5000);
-  if (error) throw error;
-  const results = await Promise.allSettled((data || []).map((user) =>
-    createNotification({ userId: user.id, actorId, type, title, body, entityType, entityId })));
-  return results.filter((result) => result.status === 'fulfilled' && result.value).length;
+  let total = 0;
+  for (let offset = 0; ; offset += 1000) {
+    const { data: users, error } = await db.from('users').select('id').range(offset, offset + 999);
+    if (error) throw error;
+    const recipients = (users || []).filter((user) => user.id !== actorId);
+    if (recipients.length) {
+      const rows = recipients.map((user) => ({ user_id: user.id, actor_id: actorId, type, title, body, entity_type: entityType, entity_id: entityId || null }));
+      const { error: insertError } = await db.from('notifications').insert(rows);
+      if (insertError) throw insertError;
+      total += rows.length;
+      // Push delivery is deliberately detached from the request path. In-app
+      // notifications are durable even when FCM is slow or temporarily down.
+      setImmediate(() => {
+        void deliverPushes(recipients, { title, body }, { type, entityType, entityId });
+      });
+    }
+    if (!users || users.length < 1000) break;
+  }
+  return total;
 }
 
-async function listNotifications(userId, { limit = 50 } = {}) {
+async function deliverPushes(recipients, notification, data) {
+  const concurrency = 20;
+  for (let offset = 0; offset < recipients.length; offset += concurrency) {
+    const batch = recipients.slice(offset, offset + concurrency);
+    await Promise.allSettled(batch.map((user) => sendPushToUser(user.id, notification, data)));
+  }
+}
+
+async function listNotifications(userId, { limit = 50, offset = 0 } = {}) {
   const db = getSupabase();
   if (!db) return [];
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
-  const { data, error } = await db.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(safeLimit);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const { data, error } = await db.from('notifications').select('id,user_id,actor_id,type,title,body,entity_type,entity_id,is_read,created_at').eq('user_id', userId).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (error) throw error;
   const actorIds = [...new Set((data || []).map((row) => row.actor_id).filter(Boolean))];
-  const actors = new Map(await Promise.all(actorIds.map(async (id) => [id, await getUserById(id)])));
+  const actors = await getUsersByIds(actorIds);
   return (data || []).map((row) => {
-    const actor = row.actor_id ? actors.get(row.actor_id) : null;
-    return mapNotification({ ...row, actor_name: actor?.name || null, actor_avatar_url: toPublicUrl(actor?.avatar_url || null) });
+    const actor = row.actor_id ? actors.get(String(row.actor_id)) : null;
+    return mapNotification({ ...row, actor_name: actor?.name || null, actor_avatar_url: actor?.avatar_url || null });
   });
 }
 

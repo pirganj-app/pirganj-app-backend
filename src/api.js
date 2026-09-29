@@ -8,7 +8,7 @@ const {
   getBloodRequests, getNotices, getJobs, getLostFound, searchAll, getOverview, getAdminSummary,
   getMyItems, getPublicProfile, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
-const { registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, updateUser, deleteUser, authenticate, optionalAuthenticate, publicUser } = require('./auth');
+const { registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, publicUser } = require('./auth');
 const { MAX_IMAGE_BYTES, uploadImage, downloadImage, toPublicUrl } = require('./storage');
 const { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment } = require('./notifications');
 const { registerDeviceToken, unregisterDeviceToken } = require('./push');
@@ -33,8 +33,19 @@ const parseImage = (field) => (req, res, next) => imageUpload.single(field)(req,
   if (!req.file) return res.status(400).json({ success: false, data: { message: 'Profile picture is required' } });
   return next();
 });
-const enrichReactions = async (reactions) => Promise.all(reactions.map(async (item) => { const user = await getUserById(item.userId || item.user_id); return { ...item, userName: user?.name || item.userId || item.user_id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) }; }));
-const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => notifyAllUsers({ actorId, type, title, body, entityType, entityId });
+const enrichReactions = async (reactions) => {
+  const users = await getUsersByIds((reactions || []).map((item) => item.userId || item.user_id));
+  return (reactions || []).map((item) => {
+    const id = item.userId || item.user_id;
+    const user = users.get(String(id));
+    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
+  });
+};
+const broadcastNewContent = ({ actorId, type, title, body, entityType, entityId }) => {
+  setImmediate(() => {
+    void notifyAllUsers({ actorId, type, title, body, entityType, entityId }).catch((error) => console.error('Notification fan-out failed:', error.message));
+  });
+};
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: '1.0' }));
 router.get('/version', asyncRoute(async (_req, res) => send(res, await getVersionPayload())));
@@ -66,7 +77,7 @@ router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await d
 router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : req.body?.kind === 'lost_found' ? 'lost_found' : 'profiles' }), 201)));
 router.post('/devices/push-token', ...owner(async (req, res) => { const missing = required(req.body || {}, ['token']); if (missing.length) return send(res, { message: 'token required' }, 400); return send(res, await registerDeviceToken(req.user.sub, req.body.token, req.body.platform || 'android'), 201); }));
 router.delete('/devices/push-token', ...owner(async (req, res) => send(res, { deleted: await unregisterDeviceToken(req.user.sub, req.body?.token) })));
-router.get('/notifications', ...owner(async (req, res) => send(res, await listNotifications(req.user.sub, { limit: req.query.limit }))));
+router.get('/notifications', ...owner(async (req, res) => send(res, await listNotifications(req.user.sub, { limit: req.query.limit, offset: req.query.offset }))));
 router.get('/notifications/unread-count', ...owner(async (req, res) => send(res, { count: await unreadCount(req.user.sub) })));
 router.put('/notifications/:id/read', ...owner(async (req, res) => send(res, { updated: await markNotificationRead(req.params.id, req.user.sub) })));
 router.put('/notifications/read-all', ...owner(async (req, res) => send(res, { updated: await markAllNotificationsRead(req.user.sub) })));
@@ -85,9 +96,9 @@ router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await
 router.post('/posts/:id/comments', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); const comment = await addComment(req.params.id, { ...req.body, author: user.name, authorId: req.user.sub }); const postOwner = await ownerOf('posts', req.params.id); await createNotification({ userId: postOwner, actorId: req.user.sub, type: 'comment', title: 'নতুন মন্তব্য', body: `${user.name} আপনার পোস্টে মন্তব্য করেছেন`, entityType: 'post', entityId: req.params.id }); if (req.body.parentId) { const parentOwner = await ownerOf('comments', req.body.parentId); const parentPostId = await postIdOfComment(req.body.parentId); await createNotification({ userId: parentOwner, actorId: req.user.sub, type: 'reply', title: 'আপনার মন্তব্যে reply এসেছে', body: `${user.name} আপনার মন্তব্যের উত্তর দিয়েছেন`, entityType: 'post', entityId: parentPostId || req.params.id }); } return send(res, comment, 201); }));
 router.put('/comments/:id', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const result = await updateComment(req.params.id, req.user.sub, req.body.body); return result ? send(res, result) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
 router.delete('/comments/:id', ...owner(async (req, res) => { const deleted = await deleteComment(req.params.id, req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
-router.post('/posts/:id/reactions', ...owner(async (req, res) => { const reaction = req.body?.reaction || 'like'; const result = await toggleReaction(req.params.id, req.user.sub, reaction); const user = await getUserById(req.user.sub); const postOwner = await ownerOf('posts', req.params.id); await createNotification({ userId: postOwner, actorId: req.user.sub, type: 'reaction', title: 'নতুন reaction', body: `${user?.name || 'কেউ'} আপনার পোস্টে ${reaction} reaction দিয়েছেন`, entityType: 'post', entityId: req.params.id }); return send(res, await enrichReactions(result)); }));
+router.post('/posts/:id/reactions', ...owner(async (req, res) => { const reaction = req.body?.reaction || 'like'; const result = await toggleReaction(req.params.id, req.user.sub, reaction); if (result.change === 'added') { const user = await getUserById(req.user.sub); const postOwner = await ownerOf('posts', req.params.id); await createNotification({ userId: postOwner, actorId: req.user.sub, type: 'reaction', title: 'নতুন reaction', body: `${user?.name || 'কেউ'} আপনার পোস্টে ${reaction} reaction দিয়েছেন`, entityType: 'post', entityId: req.params.id }); } return send(res, await enrichReactions(result.reactions)); }));
 router.get('/posts/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getReactions(req.params.id)))));
-router.post('/comments/:id/reactions', ...owner(async (req, res) => { const reaction = req.body?.reaction || 'like'; const result = await toggleCommentReaction(req.params.id, req.user.sub, reaction); const user = await getUserById(req.user.sub); const commentOwner = await ownerOf('comments', req.params.id); const postId = await postIdOfComment(req.params.id); await createNotification({ userId: commentOwner, actorId: req.user.sub, type: 'reaction', title: 'মন্তব্যে reaction', body: `${user?.name || 'কেউ'} আপনার মন্তব্যে ${reaction} reaction দিয়েছেন`, entityType: 'post', entityId: postId }); return send(res, await enrichReactions(result)); }));
+router.post('/comments/:id/reactions', ...owner(async (req, res) => { const reaction = req.body?.reaction || 'like'; const result = await toggleCommentReaction(req.params.id, req.user.sub, reaction); if (result.change === 'added') { const user = await getUserById(req.user.sub); const commentOwner = await ownerOf('comments', req.params.id); const postId = await postIdOfComment(req.params.id); await createNotification({ userId: commentOwner, actorId: req.user.sub, type: 'reaction', title: 'মন্তব্যে reaction', body: `${user?.name || 'কেউ'} আপনার মন্তব্যে ${reaction} reaction দিয়েছেন`, entityType: 'post', entityId: postId }); } return send(res, await enrichReactions(result.reactions)); }));
 router.get('/comments/:id/reactions', asyncRoute(async (req, res) => send(res, await enrichReactions(await getCommentReactions(req.params.id)))));
 router.get('/donors', asyncRoute(async (req, res) => send(res, await getDonors(req.query.group, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/donors', ...owner(async (req, res) => { const missing = required(req.body || {}, ['name', 'bloodGroup', 'phone']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const item = await addDonor(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_donor', title: 'নতুন রক্তদাতা', body: `${req.body.name} নতুন রক্তদাতা হিসেবে যুক্ত হয়েছেন`, entityType: 'donor', entityId: item.id }); return send(res, item, 201); }));
