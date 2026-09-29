@@ -9,7 +9,7 @@ const {
   getMyItems, getPublicProfile, updateOwned, deleteOwned, updateComment, deleteComment, toggleReaction, getReactions, getCommentReactions, toggleCommentReaction,
 } = require('./store');
 const { registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, publicUser } = require('./auth');
-const { MAX_IMAGE_BYTES, uploadImage, downloadImage, toPublicUrl } = require('./storage');
+const { MAX_IMAGE_BYTES, uploadImage, createSignedUpload, downloadImage, toPublicUrl } = require('./storage');
 const { createNotification, notifyAllUsers, listNotifications, unreadCount, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, ownerOf, postIdOfComment } = require('./notifications');
 const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 const { getSupabase } = require('./supabase');
@@ -75,6 +75,16 @@ router.get('/auth/me', ...owner(async (req, res) => { const user = await getUser
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
 router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));
 router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : req.body?.kind === 'lost_found' ? 'lost_found' : 'profiles' }), 201)));
+router.post('/uploads/signed', ...owner(async (req, res) => {
+  const missing = required(req.body || {}, ['mimeType']);
+  if (missing.length) return send(res, { message: 'mimeType required' }, 400);
+  return send(res, await createSignedUpload({
+    mimetype: req.body.mimeType,
+    originalname: req.body.fileName || 'upload.jpg',
+    userId: req.user.sub,
+    kind: req.body.kind === 'post' ? 'posts' : req.body.kind === 'lost_found' ? 'lost_found' : 'profiles',
+  }), 201);
+}));
 router.post('/devices/push-token', ...owner(async (req, res) => { const missing = required(req.body || {}, ['token']); if (missing.length) return send(res, { message: 'token required' }, 400); return send(res, await registerDeviceToken(req.user.sub, req.body.token, req.body.platform || 'android'), 201); }));
 router.delete('/devices/push-token', ...owner(async (req, res) => send(res, { deleted: await unregisterDeviceToken(req.user.sub, req.body?.token) })));
 router.get('/notifications', ...owner(async (req, res) => send(res, await listNotifications(req.user.sub, { limit: req.query.limit, offset: req.query.offset }))));
@@ -83,7 +93,7 @@ router.put('/notifications/:id/read', ...owner(async (req, res) => send(res, { u
 router.put('/notifications/read-all', ...owner(async (req, res) => send(res, { updated: await markAllNotificationsRead(req.user.sub) })));
 router.delete('/notifications/:id', ...owner(async (req, res) => send(res, { deleted: await deleteNotification(req.params.id, req.user.sub) })));
 router.delete('/notifications', ...owner(async (req, res) => send(res, { deleted: await deleteAllNotifications(req.user.sub) })));
-router.get('/profile/items', ...owner(async (req, res) => send(res, await getMyItems(req.user.sub))));
+router.get('/profile/items', ...owner(async (req, res) => send(res, await getMyItems(req.user.sub, { limit: req.query.limit, offset: req.query.offset, resource: req.query.resource }))));
 
 router.get('/overview', asyncRoute(async (_req, res) => send(res, await getOverview())));
 router.get('/services', asyncRoute(async (req, res) => send(res, await findServices({ category: req.query.category, search: req.query.search, limit: req.query.limit, offset: req.query.offset }))));
@@ -92,7 +102,7 @@ router.post('/services', ...owner(async (req, res) => { const missing = required
 router.get('/posts', optionalAuthenticate, asyncRoute(async (req, res) => send(res, await findPosts(req.query.tag, req.user?.sub, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/posts', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title', 'body', 'tag']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); const item = await addPost({ ...req.body, authorId: req.user.sub, author: user.name }); await broadcastNewContent({ actorId: req.user.sub, type: 'new_post', title: 'নতুন পোস্ট', body: `${user.name} নতুন একটি পোস্ট করেছেন`, entityType: 'post', entityId: item.id }); return send(res, item, 201); }));
 router.post('/posts/:id/like', asyncRoute(async (req, res) => { const post = await toggleLike(req.params.id); return post ? send(res, post) : send(res, { message: 'Post not found' }, 404); }));
-router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id))));
+router.get('/posts/:id/comments', asyncRoute(async (req, res) => send(res, await getComments(req.params.id, { limit: req.query.limit, offset: req.query.offset }))));
 router.post('/posts/:id/comments', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const user = await getUserById(req.user.sub); if (!user) return send(res, { message: 'User not found' }, 404); const comment = await addComment(req.params.id, { ...req.body, author: user.name, authorId: req.user.sub }); const postOwner = await ownerOf('posts', req.params.id); await createNotification({ userId: postOwner, actorId: req.user.sub, type: 'comment', title: 'নতুন মন্তব্য', body: `${user.name} আপনার পোস্টে মন্তব্য করেছেন`, entityType: 'post', entityId: req.params.id }); if (req.body.parentId) { const parentOwner = await ownerOf('comments', req.body.parentId); const parentPostId = await postIdOfComment(req.body.parentId); await createNotification({ userId: parentOwner, actorId: req.user.sub, type: 'reply', title: 'আপনার মন্তব্যে reply এসেছে', body: `${user.name} আপনার মন্তব্যের উত্তর দিয়েছেন`, entityType: 'post', entityId: parentPostId || req.params.id }); } return send(res, comment, 201); }));
 router.put('/comments/:id', ...owner(async (req, res) => { const missing = required(req.body || {}, ['body']); if (missing.length) return send(res, { message: 'body is required' }, 400); const result = await updateComment(req.params.id, req.user.sub, req.body.body); return result ? send(res, result) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));
 router.delete('/comments/:id', ...owner(async (req, res) => { const deleted = await deleteComment(req.params.id, req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'Comment not found or you do not own it' }, 404); }));

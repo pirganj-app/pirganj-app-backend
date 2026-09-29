@@ -11,6 +11,12 @@ services:
         value: 22
       - key: APP_VERSION
         value: 1.0.0
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: API_RATE_LIMIT_MAX
+        value: 300
+      - key: AUTH_RATE_LIMIT_MAX
+        value: 30
       - key: CORS_ORIGINS
         value: "*"
       - key: SUPABASE_URL

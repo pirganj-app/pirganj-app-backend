@@ -13,6 +13,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
+const rateWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
+const apiRateLimitMax = Number(process.env.API_RATE_LIMIT_MAX || 300);
+const authRateLimitMax = Number(process.env.AUTH_RATE_LIMIT_MAX || 30);
 const configuredOrigins = String(process.env.CORS_ORIGINS || '*')
   .split(',')
   .map((value) => value.trim())
@@ -26,15 +29,15 @@ const corsOptions = {
   maxAge: 86400,
 };
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 300,
+  windowMs: rateWindowMs,
+  limit: apiRateLimitMax,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   skip: (req) => req.path === '/health' || req.path === '/version',
 });
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: authRateLimitMax,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
 });

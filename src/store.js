@@ -22,6 +22,9 @@ const fallbackOwned = new Map();
 const fallbackComments = new Map();
 const fallbackReactions = new Map();
 const fallbackCommentReactions = new Map();
+const overviewCache = { expiresAt: 0, value: null };
+const searchCache = new Map();
+const PUBLIC_CACHE_TTL_MS = 30_000;
 function client() { return getSupabase(); }
 function hasDatabase() { return Boolean(client()); }
 function mapService(row) { return { id: row.id, name: row.name, category: row.category, meta: row.meta || '', location: row.location || '', phone: row.phone || '', open: row.open_hours || '', icon: row.icon || '•', imageUrl: toPublicUrl(row.image_url || null), ownerId: row.owner_id || null }; }
@@ -35,7 +38,7 @@ function remember(item, ownerId) { if (ownerId && item?.id) { const saved = { ..
 async function findServices({ category, search, limit = 20, offset = 0 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
   const safeOffset = Math.max(Number(offset) || 0, 0);
-  const term = String(search || '').trim().replace(/[,%]/g, ' ');
+  const term = String(search || '').trim().replace(/[,%()]/g, ' ');
   if (!hasDatabase()) {
     const filtered = seedServices.filter((item) => (!category || category === 'সব' || item.category === category) && (!term || `${item.name} ${item.category} ${item.location}`.toLowerCase().includes(term.toLowerCase())));
     return filtered.slice(safeOffset, safeOffset + safeLimit);
@@ -47,12 +50,14 @@ async function findServices({ category, search, limit = 20, offset = 0 } = {}) {
   if (error) throw error;
   return (data || []).map(mapService);
 }
-async function findServiceById(id) { if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null; const { data, error } = await client().from('services').select('*').eq('id', id).eq('status', 'approved').maybeSingle(); if (error) throw error; return data ? mapService(data) : null; }
-async function findPosts(tag, viewerId = null, { limit = 20, offset = 0 } = {}) {
+async function findServiceById(id) { if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null; const { data, error } = await client().from('services').select('id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at').eq('id', id).eq('status', 'approved').maybeSingle(); if (error) throw error; return data ? mapService(data) : null; }
+async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, search = '' } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0);
-  if (!hasDatabase()) { const filtered = seedPosts.filter((item) => !tag || tag === 'সব' || item.tag === tag); return filtered.slice(safeOffset, safeOffset + safeLimit); }
-  let query = client().from('posts').select('*').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  if (!hasDatabase()) { const term = String(search || '').trim().toLowerCase(); const filtered = seedPosts.filter((item) => (!tag || tag === 'সব' || item.tag === tag) && (!term || `${item.title} ${item.body} ${item.tag}`.toLowerCase().includes(term))); return filtered.slice(safeOffset, safeOffset + safeLimit); }
+  let query = client().from('posts').select('id,author_name,tag,title,body,image_url,likes_count,comments_count,shares_count,status,owner_id,created_at').eq('status', 'approved').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (tag && tag !== 'সব') query = query.eq('tag', tag);
+  const searchTerm = String(search || '').trim().replace(/[,%()]/g, ' ');
+  if (searchTerm) query = query.or(`title.ilike.%${searchTerm}%,body.ilike.%${searchTerm}%,tag.ilike.%${searchTerm}%`);
   const { data, error } = await query; if (error) throw error;
   const rows = data || [];
   const postIds = rows.map((row) => row.id).filter(Boolean);
@@ -105,10 +110,12 @@ async function insertMapped(table, row, mapper = (value) => value, ownerId = nul
 
 async function toggleLike(id) { if (!hasDatabase()) { const post = seedPosts.find((item) => item.id === id); if (!post) return null; post.likes += 1; return post; } const db = client(); const current = await db.from('posts').select('likes_count').eq('id', id).maybeSingle(); if (current.error) throw current.error; if (!current.data) return null; const updated = await db.from('posts').update({ likes_count: (current.data.likes_count || 0) + 1 }).eq('id', id).select('*').single(); if (updated.error) throw updated.error; return mapPost(updated.data); }
  function mapComment(row) { return { id: row.id, author: row.author_name, body: row.body, createdAt: row.created_at || null, ownerId: row.owner_id || row.author_id || null, authorAvatarUrl: toPublicUrl(row.author_avatar_url || null), parentId: row.parent_id || null }; }
-async function getComments(postId) {
+async function getComments(postId, { limit = 50, offset = 0 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
   let rows;
   if (!hasDatabase()) {
-    rows = [...fallbackComments.values()].filter((item) => item.postId === postId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    rows = [...fallbackComments.values()].filter((item) => item.postId === postId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(safeOffset, safeOffset + safeLimit);
     const authors = new Map(rows.map((item) => [String(item.id), item.author]));
     const users = await getUsersByIds(rows.map((item) => item.ownerId));
     return rows.map((item) => {
@@ -117,7 +124,7 @@ async function getComments(postId) {
       return { ...item, authorAvatarUrl: toPublicUrl(user?.avatar_url || null), replyToAuthor: item.parentId ? authors.get(String(item.parentId)) : null, reactions };
     });
   }
-  const result = await client().from('comments').select('id,post_id,author_name,owner_id,body,parent_id,created_at').eq('post_id', postId).order('created_at', { ascending: false });
+  const result = await client().from('comments').select('id,post_id,author_name,owner_id,body,parent_id,created_at').eq('post_id', postId).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (result.error) throw result.error;
   rows = result.data || [];
   const ids = rows.map((row) => row.id).filter(Boolean);
@@ -235,18 +242,43 @@ async function getLostFound({ limit = 20, offset = 0 } = {}) {
   if (error) throw error;
   return (data || []).map(mapLostFound);
 }
-async function queryRows(table, field, value, mapper = (row) => row, { limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); const { data, error } = await client().from(table).select('*').eq(field, value).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1); if (error) throw error; return (data || []).map(mapper); }
-async function searchAll(q) { const [serviceRows, postRows] = await Promise.all([findServices({ search: q }), findPosts()]); const normalized = String(q || '').toLowerCase(); return { services: serviceRows, posts: postRows.filter((post) => `${post.title} ${post.body}`.toLowerCase().includes(normalized)) }; }
-async function getOverview() { const [services, posts, donors, notices] = await Promise.all([findServices(), findPosts(), getDonors(), getNotices()]); return { services, posts, donors, notices }; }
+async function queryRows(table, field, value, mapper = (row) => row, { limit = 20, offset = 0 } = {}) { const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0); const { data, error } = await client().from(table).select(tableSelect[table] || '*').eq(field, value).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1); if (error) throw error; return (data || []).map(mapper); }
+async function searchAll(q) {
+  const normalized = String(q || '').trim().toLowerCase();
+  if (!normalized) return { services: [], posts: [] };
+  const cached = searchCache.get(normalized);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = { services: await findServices({ search: normalized, limit: 20 }), posts: await findPosts(undefined, null, { limit: 20, search: normalized }) };
+  searchCache.set(normalized, { expiresAt: Date.now() + PUBLIC_CACHE_TTL_MS, value });
+  return value;
+}
+async function getOverview() {
+  if (overviewCache.value && overviewCache.expiresAt > Date.now()) return overviewCache.value;
+  const value = await Promise.all([findServices({ limit: 20 }), findPosts(undefined, null, { limit: 20 }), getDonors(undefined, { limit: 20 }), getNotices({ limit: 20 })]).then(([services, posts, donors, notices]) => ({ services, posts, donors, notices }));
+  overviewCache.value = value;
+  overviewCache.expiresAt = Date.now() + PUBLIC_CACHE_TTL_MS;
+  return value;
+}
 async function getAdminSummary() { if (!hasDatabase()) return { pending: 0, members: 0, reports: 0, services: seedServices.length }; const db = client(); const [pending, serviceRows, profiles] = await Promise.all([db.from('posts').select('id', { count: 'exact', head: true }).eq('status', 'pending'), db.from('services').select('id', { count: 'exact', head: true }), db.from('users').select('id', { count: 'exact', head: true })]); if (pending.error || serviceRows.error || profiles.error) throw pending.error || serviceRows.error || profiles.error; return { pending: pending.count || 0, members: profiles.count || 0, reports: 0, services: serviceRows.count || 0 }; }
 
 const tableMap = { services: mapService, posts: mapPost, donors: mapDonor, blood_requests: (row) => ({ id: row.id, patientName: row.patient_name, group: row.blood_group, hospital: row.hospital, area: row.area || '', phone: row.contact_phone || '', details: row.details || '', units: row.units || 1, ownerId: row.owner_id || null }), notices: mapNotice, jobs: mapJob, lost_found: mapLostFound };
-async function getMyItems(ownerId) {
+const tableSelect = {
+  services: 'id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at',
+  posts: 'id,author_name,tag,title,body,image_url,likes_count,comments_count,shares_count,status,owner_id,created_at',
+  donors: 'id,name,blood_group,area,phone,available,owner_id,created_at',
+  blood_requests: 'id,patient_name,blood_group,hospital,area,contact_phone,details,units,owner_id,created_at',
+  notices: 'id,title,body,notice_date,label,image_url,owner_id,created_at',
+  jobs: 'id,title,company,description,location,deadline,contact_phone,owner_id,created_at',
+  lost_found: 'id,item_type,title,description,location,contact_phone,image_url,owner_id,created_at',
+};
+async function getMyItems(ownerId, { limit = 100, offset = 0, resource = null } = {}) {
   if (!hasDatabase()) return (await getUserById(ownerId)) ? [...fallbackOwned.values()].filter((item) => item.ownerId === ownerId) : [];
   const db = client();
-  const entries = Object.entries(tableMap);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const entries = Object.entries(tableMap).filter(([table]) => !resource || table === resource);
   const rows = await Promise.all(entries.map(async ([table, mapper]) => {
-    const result = await db.from(table).select('*').eq('owner_id', ownerId).order('created_at', { ascending: false }).limit(100);
+    const result = await db.from(table).select(tableSelect[table]).eq('owner_id', ownerId).order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
     if (result.error) throw result.error;
     return (result.data || []).map((row) => ({ ...mapper(row), resource: table }));
   }));

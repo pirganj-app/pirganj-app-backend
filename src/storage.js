@@ -73,6 +73,20 @@ async function uploadImage({ buffer, mimetype, originalname, userId, kind }) {
   return { path: filePath, url: toDatabaseUrl(filePath) };
 }
 
+async function createSignedUpload({ mimetype, originalname, userId, kind }) {
+  if (!String(mimetype || '').startsWith('image/')) throw Object.assign(new Error('Only image files are allowed'), { status: 415 });
+  const db = getSupabase();
+  if (!db) throw Object.assign(new Error('Supabase Storage is not configured'), { status: 503 });
+  const safeKind = ['profiles', 'posts', 'lost_found'].includes(kind) ? kind : 'profiles';
+  const safeUserId = String(userId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  if (!safeUserId) throw Object.assign(new Error('User is required'), { status: 401 });
+  await ensureBucket(db);
+  const filePath = `${safeKind}/${safeUserId}/${Date.now()}-${crypto.randomUUID()}${extension(mimetype, originalname)}`;
+  const result = await db.storage.from(BUCKET).createSignedUploadUrl(filePath);
+  if (result.error) throw result.error;
+  return { path: filePath, token: result.data.token, url: toDatabaseUrl(filePath) };
+}
+
 function assertSafeImagePath(filePath) {
   if (!filePath || /^https?:\/\//i.test(filePath) || filePath.includes('..') || filePath.startsWith('/') || !/^(profiles|posts|lost_found)\/[^/]+\/[^/]+\.[a-z0-9]+$/i.test(filePath)) {
     throw Object.assign(new Error('Invalid image path'), { status: 400 });
@@ -128,4 +142,4 @@ async function removeImagesByPrefixes(prefixes) {
   return removed;
 }
 
-module.exports = { BUCKET, MAX_IMAGE_BYTES, toStoragePath, toPublicUrl, toDatabaseUrl, uploadImage, downloadImage, removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes };
+module.exports = { BUCKET, MAX_IMAGE_BYTES, toStoragePath, toPublicUrl, toDatabaseUrl, uploadImage, createSignedUpload, downloadImage, removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes };
