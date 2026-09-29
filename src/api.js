@@ -41,10 +41,16 @@ const enrichReactions = async (reactions) => {
     return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
   });
 };
-const broadcastNewContent = ({ actorId, type, title, body, entityType, entityId }) => {
-  setImmediate(() => {
-    void notifyAllUsers({ actorId, type, title, body, entityType, entityId }).catch((error) => console.error('Notification fan-out failed:', error.message));
-  });
+const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => {
+  try {
+    // Persist in-app notifications before returning the create response. Push
+    // delivery remains detached inside notifyAllUsers, so FCM cannot slow writes.
+    return await notifyAllUsers({ actorId, type, title, body, entityType, entityId });
+  } catch (error) {
+    // Content creation must not fail because notification delivery is degraded.
+    console.error('Notification fan-out failed:', error.message);
+    return 0;
+  }
 };
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: '1.0' }));
