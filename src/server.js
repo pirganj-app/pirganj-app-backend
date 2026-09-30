@@ -55,7 +55,9 @@ app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use('/api/auth', authLimiter);
 app.use('/api', (req, res, next) => {
   res.on('finish', () => {
-    void logActivity({ userId: req.user?.sub || null, action: `${req.method} ${req.path}`, method: req.method, path: req.path, status: res.statusCode, ip: req.ip, userAgent: req.get('user-agent') });
+    if (req.path.startsWith('/admin') || req.path === '/auth/login' || req.path === '/auth/logout') return;
+    if (req.method !== 'GET' || req.path === '/health' || req.path === '/version') return;
+    void logActivity({ userId: req.user?.sub || null, action: 'page_visit', method: req.method, path: req.path, status: res.statusCode, ip: req.ip, userAgent: req.get('user-agent') });
   });
   next();
 });

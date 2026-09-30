@@ -100,6 +100,8 @@ async function loginUser({ email, password, deviceId }) {
     }
     const error = new Error('Email or password is incorrect');
     error.status = 401;
+    error.userId = user?.id || null;
+    error.failedAttempts = user ? Number(user.failed_login_attempts || 0) + 1 : null;
     throw error;
   }
   await clearLoginFailures(deviceId);

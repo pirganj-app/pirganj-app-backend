@@ -31,12 +31,16 @@ function authenticateAdmin(req, res, next) {
   }
 }
 
-async function listUsers({ limit = 100, offset = 0 } = {}) {
+async function listUsers({ limit = 100, offset = 0, name = '', email = '', phone = '' } = {}) {
   const db = getSupabase();
   if (!db) return [];
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
   const safeOffset = Math.max(Number(offset) || 0, 0);
-  const { data, error } = await db.from('users').select('id,email,phone,name,sex,address,profile_locked,is_blocked,failed_login_attempts,locked_until,created_at,updated_at').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  let query = db.from('users').select('id,email,phone,name,is_blocked,failed_login_attempts,locked_until').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  if (name) query = query.ilike('name', `%${String(name).replace(/[%_]/g, '')}%`);
+  if (email) query = query.ilike('email', `%${String(email).replace(/[%_]/g, '')}%`);
+  if (phone) query = query.ilike('phone', `%${String(phone).replace(/[%_]/g, '')}%`);
+  const { data, error } = await query;
   if (error) throw error;
   return data || [];
 }
