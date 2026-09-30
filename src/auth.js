@@ -54,34 +54,33 @@ function deviceKey(deviceId) {
   return String(deviceId || 'unknown-device').trim().slice(0, 160) || 'unknown-device';
 }
 
-function assertDeviceNotLocked(deviceId) {
+async function assertDeviceNotLocked(deviceId) {
   const key = deviceKey(deviceId);
-  const state = loginFailures.get(key);
-  if (!state) return;
-  if (!state.lockedUntil) return;
-  if (state.lockedUntil > Date.now()) {
-    const error = new Error('এই ডিভাইসে ২ ঘণ্টার জন্য login বন্ধ আছে');
-    error.status = 429;
-    error.retryAfterSeconds = Math.ceil((state.lockedUntil - Date.now()) / 1000);
-    throw error;
-  }
-  loginFailures.delete(key);
+  const local = loginFailures.get(key);
+  const db = getSupabase();
+  const remote = db ? (await db.from('login_devices').select('locked_until').eq('device_id', key).maybeSingle()).data : null;
+  const lockedUntil = Math.max(local?.lockedUntil || 0, remote?.locked_until ? Date.parse(remote.locked_until) : 0);
+  if (lockedUntil > Date.now()) { const error = new Error('এই ডিভাইসে ২ ঘণ্টার জন্য login বন্ধ আছে'); error.status = 429; error.retryAfterSeconds = Math.ceil((lockedUntil - Date.now()) / 1000); throw error; }
+  if (local?.lockedUntil) loginFailures.delete(key);
 }
 
-function recordLoginFailure(deviceId) {
+async function recordLoginFailure(deviceId, userId = null) {
   const key = deviceKey(deviceId);
   const previous = loginFailures.get(key) || { attempts: 0, lockedUntil: 0 };
   const attempts = previous.attempts + 1;
-  loginFailures.set(key, {
-    attempts,
-    lockedUntil: attempts >= MAX_LOGIN_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : 0,
-  });
+  const lockedUntil = attempts >= MAX_LOGIN_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : 0;
+  loginFailures.set(key, { attempts, lockedUntil });
+  const db = getSupabase();
+  if (db) await db.from('login_devices').upsert({ device_id: key, user_id: userId || null, failed_attempts: attempts, locked_until: lockedUntil ? new Date(lockedUntil).toISOString() : null, last_attempt_at: new Date().toISOString() }, { onConflict: 'device_id' });
 }
 
-function clearLoginFailures(deviceId) { loginFailures.delete(deviceKey(deviceId)); }
+async function clearLoginFailures(deviceId) {
+  const key = deviceKey(deviceId); loginFailures.delete(key);
+  const db = getSupabase(); if (db) await db.from('login_devices').update({ failed_attempts: 0, locked_until: null, last_attempt_at: new Date().toISOString() }).eq('device_id', key);
+}
 
 async function loginUser({ email, password, deviceId }) {
-  assertDeviceNotLocked(deviceId);
+  await assertDeviceNotLocked(deviceId);
   const normalizedEmail = normalizeEmail(email);
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error('A valid email address is required');
   const db = getSupabase();
@@ -94,7 +93,7 @@ async function loginUser({ email, password, deviceId }) {
     throw error;
   }
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
-    recordLoginFailure(deviceId);
+    await recordLoginFailure(deviceId, user?.id);
     if (db && user?.id) {
       const attempts = Number(user.failed_login_attempts || 0) + 1;
       await db.from('users').update({ failed_login_attempts: attempts, locked_until: attempts >= MAX_LOGIN_ATTEMPTS ? new Date(Date.now() + LOGIN_LOCKOUT_MS).toISOString() : null }).eq('id', user.id);
@@ -103,7 +102,7 @@ async function loginUser({ email, password, deviceId }) {
     error.status = 401;
     throw error;
   }
-  clearLoginFailures(deviceId);
+  await clearLoginFailures(deviceId);
   if (db && user?.id) await db.from('users').update({ failed_login_attempts: 0, locked_until: null }).eq('id', user.id);
   return { token: signUser(user), user: publicUser(user) };
 }
