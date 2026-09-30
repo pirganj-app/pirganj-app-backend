@@ -29,11 +29,25 @@ async function logActivity({ userId = null, action, ip = null } = {}) {
   }
 }
 
+function normalizePeriod(period) {
+  const value = String(period || 'all').trim().toLowerCase();
+  if (['today', 'day', '1day'].includes(value)) return 'today';
+  if (['7days', '7day', '7_days', 'week'].includes(value)) return '7days';
+  if (['30days', '30day', '30_days', 'month'].includes(value)) return '30days';
+  return 'all';
+}
+
 function periodStart(period) {
+  const normalized = normalizePeriod(period);
   const now = Date.now();
-  if (period === 'today') return new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
-  if (period === '7days') return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-  if (period === '30days') return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+  if (normalized === 'today') {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) - 6 * 60 * 60 * 1000).toISOString();
+  }
+  if (normalized === '7days') return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  if (normalized === '30days') return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   return null;
 }
 
