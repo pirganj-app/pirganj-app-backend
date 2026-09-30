@@ -88,13 +88,23 @@ async function loginUser({ email, password, deviceId }) {
   const user = db
     ? (await db.from('users').select('*').eq('email', normalizedEmail).maybeSingle()).data
     : [...fallbackUsers.values()].find((item) => item.email === normalizedEmail);
+  if (user?.is_blocked === true) {
+    const error = new Error('এই account admin দ্বারা blocked আছে');
+    error.status = 403;
+    throw error;
+  }
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
     recordLoginFailure(deviceId);
+    if (db && user?.id) {
+      const attempts = Number(user.failed_login_attempts || 0) + 1;
+      await db.from('users').update({ failed_login_attempts: attempts, locked_until: attempts >= MAX_LOGIN_ATTEMPTS ? new Date(Date.now() + LOGIN_LOCKOUT_MS).toISOString() : null }).eq('id', user.id);
+    }
     const error = new Error('Email or password is incorrect');
     error.status = 401;
     throw error;
   }
   clearLoginFailures(deviceId);
+  if (db && user?.id) await db.from('users').update({ failed_login_attempts: 0, locked_until: null }).eq('id', user.id);
   return { token: signUser(user), user: publicUser(user) };
 }
 
@@ -252,5 +262,7 @@ function rememberFallbackItem(item) {
 
 function getFallbackItem(id) { return fallbackItems.get(String(id)); }
 function deleteFallbackItem(id) { return fallbackItems.delete(String(id)); }
+function getLoginSecurity() { return [...loginFailures.entries()].map(([deviceId, state]) => ({ deviceId, ...state, locked: Boolean(state.lockedUntil && state.lockedUntil > Date.now()) })); }
+function clearDeviceLock(deviceId) { loginFailures.delete(deviceKey(deviceId)); return true; }
 
-module.exports = { normalizePhone, normalizeEmail, publicUser, registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem };
+module.exports = { normalizePhone, normalizeEmail, publicUser, registerUser, loginUser, loginWithGoogle, completeGoogleRegistration, getUserById, getUsersByIds, updateUser, deleteUser, authenticate, optionalAuthenticate, rememberFallbackItem, getFallbackItem, deleteFallbackItem, getLoginSecurity, clearDeviceLock };

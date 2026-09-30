@@ -7,6 +7,8 @@ const { rateLimit } = require('express-rate-limit');
 const api = require('./api');
 const { getVersionPayload } = require('./config');
 const { cleanupOldNotifications } = require('./notifications');
+const { logActivity } = require('./activity');
+const path = require('path');
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be configured in production');
@@ -51,7 +53,15 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use('/api/auth', authLimiter);
+app.use('/api', (req, res, next) => {
+  res.on('finish', () => {
+    void logActivity({ userId: req.user?.sub || null, action: `${req.method} ${req.path}`, method: req.method, path: req.path, status: res.statusCode, ip: req.ip, userAgent: req.get('user-agent') });
+  });
+  next();
+});
 app.use('/api', apiLimiter, api);
+app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin', 'index.html')));
+app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 app.get('/version', async (_req, res, next) => {
   try { return res.json({ success: true, data: await getVersionPayload() }); } catch (error) { return next(error); }
 });

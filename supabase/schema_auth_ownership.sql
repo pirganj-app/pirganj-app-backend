@@ -5,13 +5,17 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
+  email text unique,
   phone text not null unique,
   password_hash text not null,
   name text not null,
   sex text not null check (sex in ('পুরুষ', 'নারী', 'অন্যান্য')),
   address text not null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  is_blocked boolean not null default false,
+  failed_login_attempts integer not null default 0,
+  locked_until timestamptz
 );
 
 create index if not exists users_phone_idx on public.users(phone);
@@ -111,3 +115,38 @@ end $$;
 
 -- Existing rows are intentionally left with owner_id NULL. They remain publicly readable,
 -- but cannot be edited or deleted by any account until an administrator assigns ownership.
+
+
+create table if not exists public.login_devices (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.users(id) on delete cascade,
+  device_id text not null unique,
+  failed_attempts integer not null default 0,
+  locked_until timestamptz,
+  last_attempt_at timestamptz not null default now()
+);
+create index if not exists login_devices_user_id_idx on public.login_devices(user_id);
+create index if not exists login_devices_locked_until_idx on public.login_devices(locked_until);
+
+create table if not exists public.activity (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.users(id) on delete set null,
+  action text not null,
+  method text,
+  path text,
+  status integer,
+  metadata jsonb not null default '{}'::jsonb,
+  ip_address text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists activity_user_created_idx on public.activity(user_id, created_at desc);
+create index if not exists activity_created_idx on public.activity(created_at desc);
+create index if not exists activity_action_idx on public.activity(action);
+
+alter table public.login_devices enable row level security;
+alter table public.activity enable row level security;
+drop policy if exists login_devices_no_anon_access on public.login_devices;
+create policy login_devices_no_anon_access on public.login_devices for all to anon using (false) with check (false);
+drop policy if exists activity_no_anon_access on public.activity;
+create policy activity_no_anon_access on public.activity for all to anon using (false) with check (false);

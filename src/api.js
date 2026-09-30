@@ -14,6 +14,8 @@ const { createNotification, notifyAllUsers, listNotifications, unreadCount, mark
 const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 const { getSupabase } = require('./supabase');
 const { getVersionPayload } = require('./config');
+const { logActivity } = require('./activity');
+const { adminLogin, authenticateAdmin, listUsers, setUserBlocked, listDevices, unblockDevice, listActivity, sendMessage } = require('./admin');
 
 const router = express.Router();
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
@@ -74,9 +76,9 @@ router.get('/users/:id/public', asyncRoute(async (req, res) => {
   return profile ? send(res, profile) : send(res, { message: 'Profile not found' }, 404);
 }));
 router.get('/media/*', asyncRoute(async (req, res) => { const image = await downloadImage(req.params[0]); res.set('Cache-Control', 'public, max-age=31536000, immutable'); res.type(image.contentType); return res.send(image.buffer); }));
-router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); return send(res, await registerUser({ ...req.body, avatarUrl: uploaded.url }), 201); }));
-router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); return send(res, await loginUser({ ...req.body, deviceId: req.headers['x-device-id'] })); }));
-router.post('/auth/google', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken']); if (missing.length) return send(res, { message: 'accessToken required' }, 400); return send(res, await loginWithGoogle(req.body.accessToken)); }));
+router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); const result = await registerUser({ ...req.body, avatarUrl: uploaded.url }); void logActivity({ userId: result.user?.id, action: 'register', method: req.method, path: req.path, status: 201 }); return send(res, result, 201); }));
+router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const result = await loginUser({ ...req.body, deviceId: req.headers['x-device-id'] }); void logActivity({ userId: result.user?.id, action: 'login', method: req.method, path: req.path, status: 200 }); return send(res, result); }));
+router.post('/auth/google', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken']); if (missing.length) return send(res, { message: 'accessToken required' }, 400); const result = await loginWithGoogle(req.body.accessToken); void logActivity({ userId: result.user?.id, action: 'google_login', method: req.method, path: req.path, status: 200 }); return send(res, result); }));
 router.post('/auth/google/register', imageUpload.single('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); let avatarUrl; if (req.file) avatarUrl = (await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `google-signup-${Date.now()}`, kind: 'profiles' })).url; return send(res, await completeGoogleRegistration({ ...req.body, avatarUrl }), 201); }));
 router.get('/auth/me', ...owner(async (req, res) => { const user = await getUserById(req.user.sub); return user ? send(res, { user: publicUser(user) }) : send(res, { message: 'User not found' }, 404); }));
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
@@ -130,6 +132,19 @@ router.get('/lost-found', asyncRoute(async (req, res) => send(res, await getLost
 router.post('/lost-found', ...owner(async (req, res) => { const missing = required(req.body || {}, ['title']); if (missing.length) return send(res, { message: 'title required' }, 400); const item = await addLostFound(req.body, req.user.sub); await broadcastNewContent({ actorId: req.user.sub, type: 'new_lost_found', title: 'নতুন হারানো/পাওয়া তথ্য', body: req.body.title, entityType: 'lost-found', entityId: item.id }); return send(res, item, 201); }));
 router.get('/search', asyncRoute(async (req, res) => send(res, await searchAll(req.query.q || ''))));
 router.get('/admin/summary', asyncRoute(async (_req, res) => send(res, await getAdminSummary())));
+
+router.post('/admin/login', asyncRoute(async (req, res) => {
+  const result = adminLogin(req.body?.username, req.body?.password);
+  void logActivity({ action: 'admin_login', method: req.method, path: req.path, status: 200, ip: req.ip, userAgent: req.get('user-agent') });
+  return send(res, result);
+}));
+router.get('/admin/session', authenticateAdmin, (_req, res) => send(res, { authenticated: true }));
+router.get('/admin/users', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listUsers({ limit: req.query.limit, offset: req.query.offset }))));
+router.put('/admin/users/:id/block', authenticateAdmin, asyncRoute(async (req, res) => { const result = await setUserBlocked(req.params.id, req.body?.blocked === true); void logActivity({ action: req.body?.blocked === true ? 'admin_block_user' : 'admin_unblock_user', method: req.method, path: req.path, status: 200, metadata: { userId: req.params.id } }); return send(res, result); }));
+router.get('/admin/devices', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listDevices({ limit: req.query.limit, offset: req.query.offset }))));
+router.put('/admin/devices/:id/unblock', authenticateAdmin, asyncRoute(async (req, res) => send(res, await unblockDevice(req.params.id))));
+router.get('/admin/activity', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listActivity({ userId: req.query.userId, action: req.query.action, limit: req.query.limit, offset: req.query.offset }))));
+router.post('/admin/messages', authenticateAdmin, asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['title', 'body']); if (missing.length) return send(res, { message: 'শিরোনাম ও বার্তা লিখুন' }, 400); const result = await sendMessage({ userId: req.body.userId || null, title: String(req.body.title).trim(), body: String(req.body.body).trim() }); void logActivity({ action: 'admin_send_message', method: req.method, path: req.path, status: 201, metadata: { userId: req.body.userId || 'all' } }); return send(res, result, 201); }));
 
 router.put('/profile/items/:resource/:id', ...owner(async (req, res) => { const result = await updateOwned(req.params.resource, req.params.id, req.user.sub, req.body || {}); return result ? send(res, result) : send(res, { message: 'Item not found or you do not own it' }, 404); }));
 router.delete('/profile/items/:resource/:id', ...owner(async (req, res) => { const deleted = await deleteOwned(req.params.resource, req.params.id, req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'Item not found or you do not own it' }, 404); }));
