@@ -5,6 +5,7 @@ const store = require('../src/store');
 const { toStoragePath, toPublicUrl, toDatabaseUrl } = require('../src/storage');
 const { registerUser, loginUser, getUserById, deleteUser } = require('../src/auth');
 const { APP_VERSION, APK_DOWNLOAD_URL } = require('../src/config');
+const { adminLogin } = require('../src/admin');
 
 test('backend version contract is pinned to the current app release', () => {
   assert.equal(APP_VERSION, '1.0.0');
@@ -88,4 +89,10 @@ test('reaction toggle reports add, change and remove without duplicate add state
   assert.equal(changed.change, 'changed');
   assert.equal(removed.change, 'removed');
   assert.equal(removed.reactions.length, 0);
+});
+
+test('admin login accepts only the configured credentials', () => {
+  assert.equal(adminLogin('admin', 'shuaib@Admin103599@#hack').token.length > 20, true);
+  assert.throws(() => adminLogin('admin', 'change-me-now'), { status: 401 });
+  assert.throws(() => adminLogin('administrator', 'shuaib@Admin103599@#hack'), { status: 401 });
 });

@@ -5,8 +5,8 @@ const { getLoginSecurity, clearDeviceLock } = require('./auth');
 const { notifyAllUsers, createNotification } = require('./notifications');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me-now';
+const ADMIN_USERNAME = 'admin';
+const ADMIN_PASSWORD = 'shuaib@Admin103599@#hack';
 
 function adminLogin(username, password) {
   if (String(username || '') !== ADMIN_USERNAME || String(password || '') !== ADMIN_PASSWORD) {
