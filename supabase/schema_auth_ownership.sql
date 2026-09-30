@@ -134,12 +134,7 @@ create table if not exists public.activity (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.users(id) on delete set null,
   action text not null,
-  method text,
-  path text,
-  status integer,
-  metadata jsonb not null default '{}'::jsonb,
   ip_address text,
-  user_agent text,
   created_at timestamptz not null default now()
 );
 create index if not exists activity_user_created_idx on public.activity(user_id, created_at desc);
