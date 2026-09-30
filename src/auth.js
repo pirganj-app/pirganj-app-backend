@@ -64,22 +64,23 @@ async function assertDeviceNotLocked(deviceId) {
   if (local?.lockedUntil) loginFailures.delete(key);
 }
 
-async function recordLoginFailure(deviceId, userId = null) {
+async function recordLoginFailure(deviceId, userId = null, ip = null) {
   const key = deviceKey(deviceId);
   const previous = loginFailures.get(key) || { attempts: 0, lockedUntil: 0 };
   const attempts = previous.attempts + 1;
+  const totalAttempts = (previous.totalAttempts || 0) + 1;
   const lockedUntil = attempts >= MAX_LOGIN_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : 0;
-  loginFailures.set(key, { attempts, lockedUntil });
+  loginFailures.set(key, { attempts, totalAttempts, lockedUntil, ip: ip || previous.ip || null, userId: userId || previous.userId || null });
   const db = getSupabase();
-  if (db) await db.from('login_devices').upsert({ device_id: key, user_id: userId || null, failed_attempts: attempts, locked_until: lockedUntil ? new Date(lockedUntil).toISOString() : null, last_attempt_at: new Date().toISOString() }, { onConflict: 'device_id' });
+  if (db) await db.from('login_devices').upsert({ device_id: key, user_id: userId || null, ip_address: ip || null, failed_attempts: attempts, total_failed_attempts: totalAttempts, locked_until: lockedUntil ? new Date(lockedUntil).toISOString() : null, last_attempt_at: new Date().toISOString() }, { onConflict: 'device_id' });
 }
 
 async function clearLoginFailures(deviceId) {
-  const key = deviceKey(deviceId); loginFailures.delete(key);
+  const key = deviceKey(deviceId); const previous = loginFailures.get(key); if (previous) loginFailures.set(key, { ...previous, attempts: 0, lockedUntil: 0 });
   const db = getSupabase(); if (db) await db.from('login_devices').update({ failed_attempts: 0, locked_until: null, last_attempt_at: new Date().toISOString() }).eq('device_id', key);
 }
 
-async function loginUser({ email, password, deviceId }) {
+async function loginUser({ email, password, deviceId, ip }) {
   await assertDeviceNotLocked(deviceId);
   const normalizedEmail = normalizeEmail(email);
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error('A valid email address is required');
@@ -93,7 +94,7 @@ async function loginUser({ email, password, deviceId }) {
     throw error;
   }
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) {
-    await recordLoginFailure(deviceId, user?.id);
+    await recordLoginFailure(deviceId, user?.id, ip);
     if (db && user?.id) {
       const attempts = Number(user.failed_login_attempts || 0) + 1;
       await db.from('users').update({ failed_login_attempts: attempts, locked_until: attempts >= MAX_LOGIN_ATTEMPTS ? new Date(Date.now() + LOGIN_LOCKOUT_MS).toISOString() : null }).eq('id', user.id);

@@ -121,7 +121,9 @@ create table if not exists public.login_devices (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.users(id) on delete cascade,
   device_id text not null unique,
+  ip_address text,
   failed_attempts integer not null default 0,
+  total_failed_attempts integer not null default 0,
   locked_until timestamptz,
   last_attempt_at timestamptz not null default now()
 );

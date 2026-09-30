@@ -2,7 +2,7 @@ const { getSupabase } = require('./supabase');
 
 const fallbackActivity = [];
 const MAX_FALLBACK_ACTIVITY = 5000;
-const ALLOWED_EVENTS = new Set(['successfully_login', 'logout', 'হোম', 'কমিউনিটি', 'প্রোফাইল', 'যোগ করুন', 'হাসপাতাল', 'ক্লিনিক', 'ফার্মেসি', 'রেস্টুরেন্ট', 'হোটেল', 'সরকারি অফিস', 'অ্যাম্বুলেন্স', 'গাড়ি ভাড়া', 'সার্চ']);
+const ALLOWED_EVENTS = new Set(['successfully_login', 'logout', 'হোম', 'কমিউনিটি', 'প্রোফাইল', 'যোগ করুন', 'হাসপাতাল', 'স্কুল ও কলেজ', 'ডাক্তার', 'ফার্মেসি', 'রেস্টুরেন্ট', 'হোটেল', 'সরকারি অফিস', 'অ্যাম্বুলেন্স', 'গাড়ি ভাড়া', 'রক্তদাতা', 'রক্তের অনুরোধ', 'নোটিশ', 'চাকরির খবর', 'হারানো/পাওয়া', 'সার্চ']);
 
 function cleanEvent(action) {
   const value = String(action || '').trim().slice(0, 60);
@@ -38,7 +38,7 @@ function periodStart(period) {
 }
 
 async function listActivity({ userId = null, period = 'all', limit = 100, offset = 0 } = {}) {
-  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 5000);
   const safeOffset = Math.max(Number(offset) || 0, 0);
   const start = periodStart(period);
   const matches = (row) => (!userId || row.user_id === userId) && (!start || row.created_at >= start);
@@ -50,6 +50,16 @@ async function listActivity({ userId = null, period = 'all', limit = 100, offset
   const { data, error } = await query;
   if (error) throw error;
   return (data || []).map(publicActivity);
+}
+
+async function summarizeActivity({ period = 'all' } = {}) {
+  const rows = await listActivity({ period, limit: 5000 });
+  const counts = {};
+  for (const row of rows) {
+    if (['successfully_login', 'logout'].includes(row.action)) continue;
+    counts[row.action] = (counts[row.action] || 0) + 1;
+  }
+  return { period, total: Object.values(counts).reduce((sum, value) => sum + value, 0), counts };
 }
 
 function publicActivity(row) {
@@ -78,4 +88,4 @@ async function deleteActivity({ userId = null, period = 'all' } = {}) {
   return { deleted: count || 0 };
 }
 
-module.exports = { logActivity, listActivity, deleteActivity, cleanEvent };
+module.exports = { logActivity, listActivity, summarizeActivity, deleteActivity, cleanEvent };

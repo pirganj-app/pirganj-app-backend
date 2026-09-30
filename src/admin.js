@@ -3,6 +3,7 @@ const { getSupabase } = require('./supabase');
 const { listActivity, deleteActivity } = require('./activity');
 const { getLoginSecurity, clearDeviceLock } = require('./auth');
 const { notifyAllUsers, createNotification } = require('./notifications');
+const { getUsersByIds } = require('./auth');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
 const ADMIN_USERNAME = 'admin';
@@ -64,12 +65,16 @@ async function deleteAdminActivity({ userId = null, period = 'all' } = {}) {
 
 async function listDevices({ limit = 100, offset = 0 } = {}) {
   const db = getSupabase();
-  if (!db) return getLoginSecurity();
+  if (!db) {
+    const rows = getLoginSecurity();
+    return rows.map((row) => ({ ...row, email: null, name: null, phone: null }));
+  }
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
   const safeOffset = Math.max(Number(offset) || 0, 0);
-  const { data, error } = await db.from('login_devices').select('id,user_id,device_id,failed_attempts,locked_until,last_attempt_at').order('last_attempt_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  const { data, error } = await db.from('login_devices').select('id,user_id,device_id,ip_address,failed_attempts,total_failed_attempts,locked_until,last_attempt_at').order('last_attempt_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (error) throw error;
-  return data || [];
+  const users = await getUsersByIds((data || []).map((row) => row.user_id));
+  return (data || []).map((row) => { const user = row.user_id ? users.get(String(row.user_id)) : null; return { ...row, email: user?.email || null, name: user?.name || null, phone: user?.phone || null }; });
 }
 
 async function unblockDevice(id) {
