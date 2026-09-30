@@ -15,9 +15,10 @@ const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 const { getSupabase } = require('./supabase');
 const { getVersionPayload } = require('./config');
 const { logActivity } = require('./activity');
-const { adminLogin, authenticateAdmin, listUsers, setUserBlocked, listDevices, unblockDevice, listActivity, sendMessage } = require('./admin');
+const { adminLogin, authenticateAdmin, listUsers, setUserBlocked, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage } = require('./admin');
 
 const router = express.Router();
+const PAGE_NAMES = new Set(['হোম', 'কমিউনিটি', 'প্রোফাইল', 'যোগ করুন', 'হাসপাতাল', 'ক্লিনিক', 'ফার্মেসি', 'রেস্টুরেন্ট', 'হোটেল', 'সরকারি অফিস', 'অ্যাম্বুলেন্স', 'গাড়ি ভাড়া', 'সার্চ']);
 const send = (res, data, status = 200) => res.status(status).json({ success: status < 400, data });
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const required = (body, fields) => fields.filter((field) => !body[field] || !String(body[field]).trim());
@@ -75,13 +76,19 @@ router.get('/users/:id/public', asyncRoute(async (req, res) => {
   const profile = await getPublicProfile(req.params.id);
   return profile ? send(res, profile) : send(res, { message: 'Profile not found' }, 404);
 }));
+router.post('/activity/page', ...owner(async (req, res) => {
+  const pageName = String(req.body?.pageName || '').trim();
+  if (!PAGE_NAMES.has(pageName)) return send(res, { message: 'Page name is not allowed' }, 400);
+  void logActivity({ userId: req.user.sub, action: pageName });
+  return send(res, { recorded: true });
+}));
 router.get('/media/*', asyncRoute(async (req, res) => { const image = await downloadImage(req.params[0]); res.set('Cache-Control', 'public, max-age=31536000, immutable'); res.type(image.contentType); return res.send(image.buffer); }));
-router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); const result = await registerUser({ ...req.body, avatarUrl: uploaded.url }); void logActivity({ userId: result.user?.id, action: 'register', method: req.method, path: req.path, status: 201 }); return send(res, result, 201); }));
-  router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); try { const result = await loginUser({ ...req.body, deviceId: req.headers['x-device-id'] }); void logActivity({ userId: result.user?.id, action: 'login', method: req.method, path: req.path, status: 200, ip: req.ip }); return send(res, result); } catch (error) { void logActivity({ userId: error.userId || null, action: 'login_failed', method: req.method, path: req.path, status: error.status || 401, ip: req.ip, metadata: { attempts: error.failedAttempts || null } }); throw error; } }));
-router.post('/auth/google', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken']); if (missing.length) return send(res, { message: 'accessToken required' }, 400); const result = await loginWithGoogle(req.body.accessToken); void logActivity({ userId: result.user?.id, action: 'google_login', method: req.method, path: req.path, status: 200 }); return send(res, result); }));
+router.post('/auth/register', parseImage('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const uploaded = await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `signup-${Date.now()}`, kind: 'profiles' }); const result = await registerUser({ ...req.body, avatarUrl: uploaded.url }); return send(res, result, 201); }));
+  router.post('/auth/login', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['email', 'password']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); const result = await loginUser({ ...req.body, deviceId: req.headers['x-device-id'] }); void logActivity({ userId: result.user?.id, action: 'successfully_login' }); return send(res, result); }));
+  router.post('/auth/google', asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken']); if (missing.length) return send(res, { message: 'accessToken required' }, 400); const result = await loginWithGoogle(req.body.accessToken); void logActivity({ userId: result.user?.id, action: 'successfully_login' }); return send(res, result); }));
 router.post('/auth/google/register', imageUpload.single('profileImage'), asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['accessToken', 'phone', 'password', 'name', 'sex', 'address']); if (missing.length) return send(res, { message: `${missing.join(', ')} required` }, 400); let avatarUrl; if (req.file) avatarUrl = (await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: `google-signup-${Date.now()}`, kind: 'profiles' })).url; return send(res, await completeGoogleRegistration({ ...req.body, avatarUrl }), 201); }));
   router.get('/auth/me', ...owner(async (req, res) => { const user = await getUserById(req.user.sub); return user ? send(res, { user: publicUser(user) }) : send(res, { message: 'User not found' }, 404); }));
-  router.post('/auth/logout', ...owner(async (req, res) => { void logActivity({ userId: req.user.sub, action: 'logout', method: req.method, path: req.path, status: 200, ip: req.ip }); return send(res, { loggedOut: true }); }));
+  router.post('/auth/logout', ...owner(async (req, res) => { void logActivity({ userId: req.user.sub, action: 'logout' }); return send(res, { loggedOut: true }); }));
 router.put('/auth/me', ...owner(async (req, res) => send(res, { user: await updateUser(req.user.sub, req.body || {}) })));
 router.delete('/auth/me', ...owner(async (req, res) => { const deleted = await deleteUser(req.user.sub); return deleted ? send(res, { deleted: true }) : send(res, { message: 'User not found' }, 404); }));
 router.post('/uploads/image', authenticate, parseImage('image'), asyncRoute(async (req, res) => send(res, await uploadImage({ buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, userId: req.user.sub, kind: req.body?.kind === 'post' ? 'posts' : req.body?.kind === 'lost_found' ? 'lost_found' : 'profiles' }), 201)));
@@ -141,10 +148,12 @@ router.post('/admin/login', asyncRoute(async (req, res) => {
 }));
 router.get('/admin/session', authenticateAdmin, (_req, res) => send(res, { authenticated: true }));
   router.get('/admin/users', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listUsers({ limit: req.query.limit, offset: req.query.offset, name: req.query.name, email: req.query.email, phone: req.query.phone }))));
-router.put('/admin/users/:id/block', authenticateAdmin, asyncRoute(async (req, res) => { const result = await setUserBlocked(req.params.id, req.body?.blocked === true); void logActivity({ action: req.body?.blocked === true ? 'admin_block_user' : 'admin_unblock_user', method: req.method, path: req.path, status: 200, metadata: { userId: req.params.id } }); return send(res, result); }));
+  router.put('/admin/users/:id/block', authenticateAdmin, asyncRoute(async (req, res) => send(res, await setUserBlocked(req.params.id, req.body?.blocked === true))));
+  router.delete('/admin/users/:id', authenticateAdmin, asyncRoute(async (req, res) => send(res, await deleteAdminUser(req.params.id))));
 router.get('/admin/devices', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listDevices({ limit: req.query.limit, offset: req.query.offset }))));
 router.put('/admin/devices/:id/unblock', authenticateAdmin, asyncRoute(async (req, res) => send(res, await unblockDevice(req.params.id))));
-  router.get('/admin/activity', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listActivity({ userId: req.query.userId, action: req.query.action, limit: req.query.limit, offset: req.query.offset }))));
+  router.get('/admin/activity', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listActivity({ userId: req.query.userId, period: req.query.period, limit: req.query.limit, offset: req.query.offset }))));
+  router.delete('/admin/activity', authenticateAdmin, asyncRoute(async (req, res) => send(res, await deleteAdminActivity({ userId: req.query.userId, period: req.query.period }))));
 router.post('/admin/messages', authenticateAdmin, asyncRoute(async (req, res) => { const missing = required(req.body || {}, ['title', 'body']); if (missing.length) return send(res, { message: 'শিরোনাম ও বার্তা লিখুন' }, 400); const result = await sendMessage({ userId: req.body.userId || null, title: String(req.body.title).trim(), body: String(req.body.body).trim() }); void logActivity({ action: 'admin_send_message', method: req.method, path: req.path, status: 201, metadata: { userId: req.body.userId || 'all' } }); return send(res, result, 201); }));
 
 router.put('/profile/items/:resource/:id', ...owner(async (req, res) => { const result = await updateOwned(req.params.resource, req.params.id, req.user.sub, req.body || {}); return result ? send(res, result) : send(res, { message: 'Item not found or you do not own it' }, 404); }));

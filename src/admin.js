@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
-const { listActivity } = require('./activity');
+const { listActivity, deleteActivity } = require('./activity');
 const { getLoginSecurity, clearDeviceLock } = require('./auth');
 const { notifyAllUsers, createNotification } = require('./notifications');
 
@@ -53,6 +53,15 @@ async function setUserBlocked(id, blocked) {
   return data;
 }
 
+async function deleteAdminUser(id) {
+  const deleted = await require('./auth').deleteUser(id);
+  return { id, deleted: Boolean(deleted) };
+}
+
+async function deleteAdminActivity({ userId = null, period = 'all' } = {}) {
+  return deleteActivity({ userId, period });
+}
+
 async function listDevices({ limit = 100, offset = 0 } = {}) {
   const db = getSupabase();
   if (!db) return getLoginSecurity();
@@ -76,4 +85,4 @@ async function sendMessage({ userId, title, body }) {
   return notifyAllUsers({ actorId: null, type: 'admin_message', title, body, entityType: null, entityId: null });
 }
 
-module.exports = { adminLogin, authenticateAdmin, listUsers, setUserBlocked, listDevices, unblockDevice, listActivity, sendMessage };
+module.exports = { adminLogin, authenticateAdmin, listUsers, setUserBlocked, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage };
