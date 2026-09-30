@@ -20,8 +20,8 @@ function renderUsers() {
 }
 function renderActivity(target, rows, mode = 'activity') {
   const body = $(target);
-  if (!rows.length) { body.innerHTML = `<tr><td colspan="${mode === 'views' ? 3 : 3}" class="empty">কোনো data নেই</td></tr>`; return; }
-  body.innerHTML = rows.map((item) => { const event = item.action === 'successfully_login' ? '<span class="bg bg-ok">SUCCESSFULLY LOGIN</span>' : item.action === 'logout' ? '<span class="bg bg-bl">LOGOUT</span>' : `<span class="bg bg-ac">${escapeHtml(item.action)}</span>`; return `<tr><td class="cu">${escapeHtml(userName(item.user_id))}</td><td>${event}</td><td class="cm">${escapeHtml(dateText(item.created_at))}</td></tr>`; }).join('');
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="empty">কোনো data নেই</td></tr>'; return; }
+  body.innerHTML = rows.map((item) => { const event = item.action === 'successfully_login' ? '<span class="bg bg-ok">SUCCESSFULLY LOGIN</span>' : item.action === 'logout' ? '<span class="bg bg-bl">LOGOUT</span>' : `<span class="bg bg-ac">${escapeHtml(item.action)}</span>`; return `<tr><td class="cu">${escapeHtml(userName(item.user_id))}</td><td>${event}</td><td class="cm">${escapeHtml(item.ip_address || 'অজানা')}</td><td class="cm">${escapeHtml(dateText(item.created_at))}</td></tr>`; }).join('');
 }
 function updateStats() { $('#statUsers').textContent = users.length; $('#statViews').textContent = activity.filter((item) => !['successfully_login', 'logout'].includes(item.action)).length; $('#statLogins').textContent = activity.filter((item) => item.action === 'successfully_login').length; $('#statBlocked').textContent = users.filter((item) => item.is_blocked).length; renderActivity('#recentBody', activity.slice(0, 8)); }
 async function loadUsers() { try { users = await api(`/users?${userQuery()}`); renderUsers(); updateStats(); } catch (error) { show(error.message); } }

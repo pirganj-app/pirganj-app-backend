@@ -7,5 +7,4 @@ set method = null,
     path = null,
     status = null,
     metadata = '{}'::jsonb,
-    ip_address = null,
     user_agent = null;

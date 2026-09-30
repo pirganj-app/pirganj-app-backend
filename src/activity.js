@@ -9,12 +9,12 @@ function cleanEvent(action) {
   return ALLOWED_EVENTS.has(value) ? value : null;
 }
 
-async function logActivity({ userId = null, action } = {}) {
+async function logActivity({ userId = null, action, ip = null } = {}) {
   const event = cleanEvent(action);
   if (!event) return;
-  // Deliberately persist only the user, named event and timestamp. Routes,
-  // request details, metadata, IP addresses and user agents are not stored.
-  const row = { user_id: userId || null, action: event };
+  // Persist only the user, named event, timestamp and IP. Routes, request
+  // details, metadata and user agents are deliberately never stored.
+  const row = { user_id: userId || null, action: event, ip_address: ip || null };
   const db = getSupabase();
   if (!db) {
     fallbackActivity.unshift({ id: `activity-${Date.now()}-${Math.random().toString(36).slice(2)}`, ...row, created_at: new Date().toISOString() });
@@ -44,7 +44,7 @@ async function listActivity({ userId = null, period = 'all', limit = 100, offset
   const matches = (row) => (!userId || row.user_id === userId) && (!start || row.created_at >= start);
   const db = getSupabase();
   if (!db) return fallbackActivity.filter(matches).slice(safeOffset, safeOffset + safeLimit).map(publicActivity);
-  let query = db.from('activity').select('id,user_id,action,created_at').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  let query = db.from('activity').select('id,user_id,action,ip_address,created_at').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (userId) query = query.eq('user_id', userId);
   if (start) query = query.gte('created_at', start);
   const { data, error } = await query;
@@ -53,7 +53,7 @@ async function listActivity({ userId = null, period = 'all', limit = 100, offset
 }
 
 function publicActivity(row) {
-  return { id: row.id, user_id: row.user_id, action: row.action, created_at: row.created_at };
+  return { id: row.id, user_id: row.user_id, action: row.action, ip_address: row.ip_address || null, created_at: row.created_at };
 }
 
 async function deleteActivity({ userId = null, period = 'all' } = {}) {
