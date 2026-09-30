@@ -5,8 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
-    "test": "node --test"
+    "start": "node src/server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
