@@ -14,6 +14,7 @@ create table if not exists public.users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   is_blocked boolean not null default false,
+  is_verified boolean not null default false,
   failed_login_attempts integer not null default 0,
   locked_until timestamptz
 );

@@ -28,7 +28,7 @@ const PUBLIC_CACHE_TTL_MS = 30_000;
 function client() { return getSupabase(); }
 function hasDatabase() { return Boolean(client()); }
 function mapService(row) { return { id: row.id, name: row.name, category: row.category, meta: row.meta || '', location: row.location || '', phone: row.phone || '', open: row.open_hours || '', icon: row.icon || '•', imageUrl: toPublicUrl(row.image_url || null), ownerId: row.owner_id || null }; }
-function mapPost(row) { return { id: row.id, author: row.author_name || row.author || 'পীরগঞ্জবাসী', tag: row.tag, title: row.title, body: row.body, imageUrl: toPublicUrl(row.image_url || row.imageUrl || null), authorAvatarUrl: toPublicUrl(row.author_avatar_url || row.authorAvatarUrl || null), likes: row.likes_count || 0, comments: row.comments_count || 0, shares: row.shares_count || 0, status: row.status, ownerId: row.owner_id || row.author_id || null, createdAt: row.created_at || null }; }
+function mapPost(row) { return { id: row.id, author: row.author_name || row.author || 'পীরগঞ্জবাসী', tag: row.tag, title: row.title, body: row.body, imageUrl: toPublicUrl(row.image_url || row.imageUrl || null), authorAvatarUrl: toPublicUrl(row.author_avatar_url || row.authorAvatarUrl || null), likes: row.likes_count || 0, comments: row.comments_count || 0, shares: row.shares_count || 0, status: row.status, ownerId: row.owner_id || row.author_id || null, authorVerified: row.is_verified === true, createdAt: row.created_at || null }; }
 function mapDonor(row) { return { id: row.id, name: row.name, group: row.blood_group || row.group, area: row.area || '', phone: row.phone || '', available: row.available, ownerId: row.owner_id || null }; }
 function mapNotice(row) { return { id: row.id, title: row.title, body: row.body || '', date: row.notice_date || '', label: row.label, ownerId: row.owner_id || null }; }
 function mapJob(row) { return { id: row.id, title: row.title, company: row.company || '', description: row.description || '', location: row.location || '', deadline: row.deadline || '', contactPhone: row.contact_phone || '', ownerId: row.owner_id || null }; }
@@ -94,6 +94,7 @@ async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, before 
     if (authorId) {
       const author = authors.get(String(authorId));
       post.authorAvatarUrl = toPublicUrl(author?.avatar_url || author?.avatarUrl || post.authorAvatarUrl || null);
+      post.authorVerified = author?.is_verified === true;
     }
     const reactions = reactionsByPost.get(String(row.id)) || [];
     post.likes = reactions.length;
@@ -117,7 +118,7 @@ async function addLostFound(input, ownerId = null) { return insertMapped('lost_f
 async function insertMapped(table, row, mapper = (value) => value, ownerId = null) { if (!hasDatabase()) { const id = `${table}-${Date.now()}`; const result = { id, ...row, ownerId }; return remember(mapper({ ...row, id }), ownerId) || result; } const { data, error } = await client().from(table).insert(row).select('*').single(); if (error) throw error; return mapper(data); }
 
 async function toggleLike(id) { if (!hasDatabase()) { const post = seedPosts.find((item) => item.id === id); if (!post) return null; post.likes += 1; return post; } const db = client(); const current = await db.from('posts').select('likes_count').eq('id', id).maybeSingle(); if (current.error) throw current.error; if (!current.data) return null; const updated = await db.from('posts').update({ likes_count: (current.data.likes_count || 0) + 1 }).eq('id', id).select('*').single(); if (updated.error) throw updated.error; return mapPost(updated.data); }
- function mapComment(row) { return { id: row.id, author: row.author_name, body: row.body, createdAt: row.created_at || null, ownerId: row.owner_id || row.author_id || null, authorAvatarUrl: toPublicUrl(row.author_avatar_url || null), parentId: row.parent_id || null }; }
+ function mapComment(row) { return { id: row.id, author: row.author_name, body: row.body, createdAt: row.created_at || null, ownerId: row.owner_id || row.author_id || null, authorVerified: row.is_verified === true, authorAvatarUrl: toPublicUrl(row.author_avatar_url || null), parentId: row.parent_id || null }; }
 async function getComments(postId, { limit = 50, offset = 0 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const safeOffset = Math.max(Number(offset) || 0, 0);
@@ -148,7 +149,7 @@ async function getComments(postId, { limit = 50, offset = 0 } = {}) {
   return rows.map((row) => {
     const user = users.get(String(row.owner_id));
     const reactions = reactionsByComment.get(String(row.id)) || [];
-    return { ...mapComment(row), authorAvatarUrl: toPublicUrl(user?.avatar_url || row.author_avatar_url || null), replyToAuthor: row.parent_id ? authors.get(String(row.parent_id)) : null, reactions: reactions.map((item) => { const reactionUser = users.get(String(item.userId)); return { ...item, userName: reactionUser?.name || item.userId, userAvatarUrl: toPublicUrl(reactionUser?.avatar_url || null) }; }) };
+    return { ...mapComment(row), authorAvatarUrl: toPublicUrl(user?.avatar_url || row.author_avatar_url || null), authorVerified: user?.is_verified === true, replyToAuthor: row.parent_id ? authors.get(String(row.parent_id)) : null, reactions: reactions.map((item) => { const reactionUser = users.get(String(item.userId)); return { ...item, userName: reactionUser?.name || item.userId, userAvatarUrl: toPublicUrl(reactionUser?.avatar_url || null), userVerified: reactionUser?.is_verified === true }; }) };
   });
 }
 async function addComment(postId, { author, body, authorId = null, parentId = null }) { const createdAt = new Date().toISOString(); if (!hasDatabase()) { const comment = { id: `comment-${Date.now()}-${Math.random().toString(36).slice(2)}`, postId, author: author || 'পীরগঞ্জবাসী', body, createdAt, ownerId: authorId, parentId }; fallbackComments.set(comment.id, comment); const enriched = await getComments(postId); return enriched.find((item) => String(item.id) === String(comment.id)) || comment; } const row = { post_id: postId, author_name: author || 'পীরগঞ্জবাসী', owner_id: authorId, body }; if (parentId) row.parent_id = parentId; const { data, error } = await client().from('comments').insert(row).select('*').single(); if (error) throw error; const enriched = await getComments(postId); return enriched.find((item) => String(item.id) === String(data.id)) || mapComment(data); }
@@ -197,7 +198,7 @@ async function enrichReactionUsers(list) {
   return (list || []).map((item) => {
     const id = item.userId || item.user_id;
     const user = users.get(String(id));
-    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
+    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null), userVerified: user?.is_verified === true };
   });
 }
 
@@ -296,13 +297,13 @@ async function getPublicProfile(ownerId) {
   const user = await getUserById(ownerId);
   if (!user) return null;
   const locked = user.profile_locked === true || user.profileLocked === true;
-  if (locked) return { user: { id: user.id, name: user.name, sex: user.sex || '', address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: true }, items: [] };
+  if (locked) return { user: { id: user.id, name: user.name, sex: user.sex || '', address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), isVerified: user.is_verified === true, profileLocked: true }, items: [] };
   const items = await getMyItems(ownerId);
   const safeItems = items.map((item) => {
     const { phone, contactPhone, ...safe } = item;
-    return { ...safe, ownerId };
+    return { ...safe, ownerId, ownerVerified: user.is_verified === true };
   });
-  return { user: { id: user.id, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: false }, items: safeItems };
+  return { user: { id: user.id, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), isVerified: user.is_verified === true, profileLocked: false }, items: safeItems };
 }
 async function updateOwned(resource, id, ownerId, input) { const allowed = { services: { name: input.name, category: input.category, meta: input.meta, location: input.location, phone: input.phone, open_hours: input.openHours }, posts: { title: input.title, body: input.body, tag: input.tag, image_url: input.imageUrl === undefined ? undefined : toDatabaseUrl(input.imageUrl) }, donors: { name: input.name, blood_group: input.bloodGroup, area: input.area, phone: input.phone }, blood_requests: { patient_name: input.patientName, blood_group: input.bloodGroup, hospital: input.hospital, area: input.area, contact_phone: input.phone, details: input.details, units: input.units }, notices: { title: input.title, body: input.body, label: input.label }, jobs: { title: input.title, company: input.company, description: input.description, location: input.location, contact_phone: input.phone }, lost_found: { title: input.title, description: input.description, location: input.location, contact_phone: input.phone, image_url: input.imageUrl === undefined ? undefined : toDatabaseUrl(input.imageUrl) } }[resource]; if (!allowed) throw new Error('Unsupported resource'); const clean = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined)); if (!hasDatabase()) { const item = getFallbackItem(id); if (!item || item.ownerId !== ownerId) return null; Object.assign(item, input); if (resource === 'donors' && input.bloodGroup !== undefined) item.group = input.bloodGroup; if (resource === 'blood_requests') { if (input.bloodGroup !== undefined) item.group = input.bloodGroup; if (input.patientName !== undefined) item.patientName = input.patientName; if (input.phone !== undefined) item.phone = input.phone; } return item; } let oldImage = null; if ((resource === 'posts' || resource === 'lost_found') && input.imageUrl !== undefined) { const current = await client().from(resource).select('image_url').eq('id', id).eq('owner_id', ownerId).maybeSingle(); if (current.error) throw current.error; oldImage = current.data?.image_url || null; } const { data, error } = await client().from(resource).update(clean).eq('id', id).eq('owner_id', ownerId).select('*').maybeSingle(); if (error) throw error; if (oldImage && oldImage !== data?.image_url) await removeImageByUrl(oldImage); return data ? tableMap[resource](data) : null; }
 async function deleteOwned(resource, id, ownerId) { if (!tableMap[resource]) throw new Error('Unsupported resource'); if (!hasDatabase()) { const item = getFallbackItem(id); if (!item || item.ownerId !== ownerId) return false; deleteFallbackItem(id); fallbackOwned.delete(String(id)); return true; } let oldImage = null; if (['services', 'posts', 'notices', 'lost_found'].includes(resource)) { const current = await client().from(resource).select('image_url').eq('id', id).eq('owner_id', ownerId).maybeSingle(); if (current.error) throw current.error; oldImage = current.data?.image_url || null; } const { data, error } = await client().from(resource).delete().eq('id', id).eq('owner_id', ownerId).select('id'); if (error) throw error; if (data?.length && oldImage) await removeImageByUrl(oldImage); return Boolean(data?.length); }

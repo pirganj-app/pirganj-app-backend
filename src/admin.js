@@ -37,7 +37,7 @@ async function listUsers({ limit = 100, offset = 0, name = '', email = '', phone
   if (!db) return [];
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
   const safeOffset = Math.max(Number(offset) || 0, 0);
-  let query = db.from('users').select('id,email,phone,name,is_blocked,failed_login_attempts,locked_until').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
+  let query = db.from('users').select('id,email,phone,name,is_blocked,is_verified,failed_login_attempts,locked_until').order('created_at', { ascending: false }).range(safeOffset, safeOffset + safeLimit - 1);
   if (name) query = query.ilike('name', `%${String(name).replace(/[%_]/g, '')}%`);
   if (email) query = query.ilike('email', `%${String(email).replace(/[%_]/g, '')}%`);
   if (phone) query = query.ilike('phone', `%${String(phone).replace(/[%_]/g, '')}%`);
@@ -50,6 +50,14 @@ async function setUserBlocked(id, blocked) {
   const db = getSupabase();
   if (!db) return { id, is_blocked: Boolean(blocked) };
   const { data, error } = await db.from('users').update({ is_blocked: Boolean(blocked) }).eq('id', id).select('id,is_blocked').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function setUserVerified(id, verified) {
+  const db = getSupabase();
+  if (!db) return { id, is_verified: Boolean(verified) };
+  const { data, error } = await db.from('users').update({ is_verified: Boolean(verified) }).eq('id', id).select('id,is_verified').maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -90,4 +98,4 @@ async function sendMessage({ userId, title, body }) {
   return notifyAllUsers({ actorId: null, type: 'admin_message', title, body, entityType: null, entityId: null });
 }
 
-module.exports = { adminLogin, authenticateAdmin, listUsers, setUserBlocked, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage };
+module.exports = { adminLogin, authenticateAdmin, listUsers, setUserBlocked, setUserVerified, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage };

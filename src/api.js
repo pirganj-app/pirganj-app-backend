@@ -15,7 +15,7 @@ const { registerDeviceToken, unregisterDeviceToken } = require('./push');
 const { getSupabase } = require('./supabase');
 const { getVersionPayload } = require('./config');
 const { logActivity, summarizeActivity } = require('./activity');
-const { adminLogin, authenticateAdmin, listUsers, setUserBlocked, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage } = require('./admin');
+const { adminLogin, authenticateAdmin, listUsers, setUserBlocked, setUserVerified, deleteAdminUser, listDevices, unblockDevice, listActivity, deleteAdminActivity, sendMessage } = require('./admin');
 
 const router = express.Router();
 const PAGE_NAMES = new Set(['হোম', 'কমিউনিটি', 'প্রোফাইল', 'যোগ করুন', 'হাসপাতাল', 'স্কুল ও কলেজ', 'ডাক্তার', 'ফার্মেসি', 'রেস্টুরেন্ট', 'হোটেল', 'সরকারি অফিস', 'অ্যাম্বুলেন্স', 'গাড়ি ভাড়া', 'রক্তদাতা', 'রক্তের অনুরোধ', 'নোটিশ', 'চাকরির খবর', 'হারানো/পাওয়া', 'সার্চ']);
@@ -41,7 +41,7 @@ const enrichReactions = async (reactions) => {
   return (reactions || []).map((item) => {
     const id = item.userId || item.user_id;
     const user = users.get(String(id));
-    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null) };
+    return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null), userVerified: user?.is_verified === true };
   });
 };
 const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => {
@@ -149,6 +149,7 @@ router.post('/admin/login', asyncRoute(async (req, res) => {
 router.get('/admin/session', authenticateAdmin, (_req, res) => send(res, { authenticated: true }));
   router.get('/admin/users', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listUsers({ limit: req.query.limit, offset: req.query.offset, name: req.query.name, email: req.query.email, phone: req.query.phone }))));
   router.put('/admin/users/:id/block', authenticateAdmin, asyncRoute(async (req, res) => send(res, await setUserBlocked(req.params.id, req.body?.blocked === true))));
+  router.put('/admin/users/:id/verify', authenticateAdmin, asyncRoute(async (req, res) => send(res, await setUserVerified(req.params.id, req.body?.verified === true))));
   router.delete('/admin/users/:id', authenticateAdmin, asyncRoute(async (req, res) => send(res, await deleteAdminUser(req.params.id))));
 router.get('/admin/devices', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listDevices({ limit: req.query.limit, offset: req.query.offset }))));
 router.put('/admin/devices/:id/unblock', authenticateAdmin, asyncRoute(async (req, res) => send(res, await unblockDevice(req.params.id))));

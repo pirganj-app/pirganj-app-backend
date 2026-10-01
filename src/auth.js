@@ -23,7 +23,7 @@ function signUser(user) {
 }
 
 function publicUser(user) {
-  return { id: user.id, email: user.email || '', phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), profileLocked: user.profile_locked === true || user.profileLocked === true };
+  return { id: user.id, email: user.email || '', phone: user.phone, name: user.name, sex: user.sex, address: user.address || '', avatarUrl: toPublicUrl(user.avatar_url || user.avatarUrl || null), isVerified: user.is_verified === true || user.isVerified === true, profileLocked: user.profile_locked === true || user.profileLocked === true };
 }
 
 async function registerUser({ email, phone, password, name, sex, address, avatarUrl }) {
