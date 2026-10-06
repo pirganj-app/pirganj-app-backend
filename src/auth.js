@@ -19,7 +19,7 @@ function normalizeEmail(email) {
 }
 
 function signUser(user) {
-  return jwt.sign({ sub: user.id, phone: user.phone, profileLocked: user.profile_locked === true || user.profileLocked === true }, JWT_SECRET, { expiresIn: '5m' });
+  return jwt.sign({ sub: user.id, phone: user.phone, profileLocked: user.profile_locked === true || user.profileLocked === true }, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function publicUser(user) {
