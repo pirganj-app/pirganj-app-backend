@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
 const { removeImageByUrl, removeImagesByUrls, removeImagesByPrefixes, toDatabaseUrl, toPublicUrl } = require('./storage');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
+const JWT_SECRET = process.env.JWT_SECRET || '';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCKOUT_MS = 2 * 60 * 60 * 1000;
 const fallbackUsers = new Map();

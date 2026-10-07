@@ -9,8 +9,11 @@ const { getVersionPayload } = require('./config');
 const { cleanupOldNotifications } = require('./notifications');
 const path = require('path');
 
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET must be configured in production');
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters');
+}
+if (!process.env.ADMIN_PASSWORD_HASH) {
+  throw new Error('ADMIN_PASSWORD_HASH must be configured');
 }
 
 const app = express();
@@ -43,6 +46,12 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
 });
+const adminAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.ADMIN_AUTH_RATE_LIMIT_MAX || 10),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -52,6 +61,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use('/api/auth', authLimiter);
+app.use('/api/admin/login', adminAuthLimiter);
 app.use('/api', apiLimiter, api);
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin', 'index.html')));
 app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));

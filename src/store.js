@@ -25,6 +25,7 @@ const fallbackCommentReactions = new Map();
 const overviewCache = { expiresAt: 0, value: null };
 const searchCache = new Map();
 const PUBLIC_CACHE_TTL_MS = 30_000;
+const MAX_SEARCH_CACHE_ENTRIES = 256;
 function client() { return getSupabase(); }
 function hasDatabase() { return Boolean(client()); }
 function mapService(row) { return { id: row.id, name: row.name, category: row.category, meta: row.meta || '', location: row.location || '', phone: row.phone || '', open: row.open_hours || '', icon: row.icon || '•', imageUrl: toPublicUrl(row.image_url || null), ownerId: row.owner_id || null }; }
@@ -51,6 +52,51 @@ async function findServices({ category, search, limit = 20, offset = 0 } = {}) {
   return (data || []).map(mapService);
 }
 async function findServiceById(id) { if (!hasDatabase()) return seedServices.find((item) => item.id === id) || null; const { data, error } = await client().from('services').select('id,name,category,meta,location,phone,open_hours,icon,image_url,owner_id,created_at').eq('id', id).eq('status', 'approved').maybeSingle(); if (error) throw error; return data ? mapService(data) : null; }
+async function getPostFeedStats(postIds, viewerId) {
+  if (!postIds.length) return { counts: new Map(), mine: new Map() };
+  const db = client();
+  const minePromise = viewerId
+    ? db.from('post_reactions').select('post_id,reaction').in('post_id', postIds).eq('user_id', viewerId)
+    : Promise.resolve({ data: [], error: null });
+  try {
+    const [stats, mine] = await Promise.all([
+      db.rpc('post_feed_stats', { p_post_ids: postIds }),
+      minePromise,
+    ]);
+    if (stats.error) throw stats.error;
+    if (mine.error) throw mine.error;
+    const counts = new Map((stats.data || []).map((row) => [String(row.post_id), {
+      likes: Number(row.reaction_count || 0),
+      comments: Number(row.comment_count || 0),
+    }]));
+    const mineMap = new Map((mine.data || []).map((row) => [String(row.post_id), row.reaction]));
+    return { counts, mine: mineMap };
+  } catch (_) {
+    const [reactions, comments] = await Promise.all([
+      db.from('post_reactions').select('post_id,user_id,reaction').in('post_id', postIds),
+      db.from('comments').select('post_id').in('post_id', postIds),
+    ]);
+    if (reactions.error) throw reactions.error;
+    if (comments.error) throw comments.error;
+    const counts = new Map();
+    for (const row of reactions.data || []) {
+      const key = String(row.post_id);
+      const current = counts.get(key) || { likes: 0, comments: 0 };
+      current.likes += 1;
+      counts.set(key, current);
+    }
+    for (const row of comments.data || []) {
+      const key = String(row.post_id);
+      const current = counts.get(key) || { likes: 0, comments: 0 };
+      current.comments += 1;
+      counts.set(key, current);
+    }
+    const mine = new Map((reactions.data || [])
+      .filter((row) => viewerId && String(row.user_id) === String(viewerId))
+      .map((row) => [String(row.post_id), row.reaction]));
+    return { counts, mine };
+  }
+}
 async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, before = null, search = '', id = null } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50); const safeOffset = Math.max(Number(offset) || 0, 0);
   if (!hasDatabase()) { const term = String(search || '').trim().toLowerCase(); const filtered = seedPosts.filter((item) => (!id || String(item.id) === String(id)) && (!tag || tag === 'সব' || item.tag === tag) && (!term || `${item.title} ${item.body} ${item.tag}`.toLowerCase().includes(term))); return filtered.slice(safeOffset, safeOffset + safeLimit); }
@@ -66,28 +112,10 @@ async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, before 
   const rows = data || [];
   const postIds = rows.map((row) => row.id).filter(Boolean);
   const ownerIds = rows.map((row) => row.owner_id || row.author_id).filter(Boolean);
-  const [authors, reactionRows, commentRows] = await Promise.all([
+  const [authors, feedStats] = await Promise.all([
     getUsersByIds(ownerIds).catch(() => new Map()),
-    postIds.length
-      ? client().from('post_reactions').select('post_id,user_id,reaction').in('post_id', postIds)
-          .then((result) => result.error ? [] : (result.data || [])).catch(() => [])
-      : [],
-    postIds.length
-      ? client().from('comments').select('post_id').in('post_id', postIds)
-          .then((result) => result.error ? [] : (result.data || [])).catch(() => [])
-      : [],
+    getPostFeedStats(postIds, viewerId),
   ]);
-  const reactionsByPost = new Map();
-  for (const reaction of reactionRows) {
-    const list = reactionsByPost.get(String(reaction.post_id)) || [];
-    list.push(reaction);
-    reactionsByPost.set(String(reaction.post_id), list);
-  }
-  const commentsByPost = new Map();
-  for (const comment of commentRows) {
-    const key = String(comment.post_id);
-    commentsByPost.set(key, (commentsByPost.get(key) || 0) + 1);
-  }
   return rows.map((row) => {
     const post = mapPost(row);
     const authorId = row.owner_id || row.author_id;
@@ -96,10 +124,10 @@ async function findPosts(tag, viewerId = null, { limit = 20, offset = 0, before 
       post.authorAvatarUrl = toPublicUrl(author?.avatar_url || author?.avatarUrl || post.authorAvatarUrl || null);
       post.authorVerified = author?.is_verified === true;
     }
-    const reactions = reactionsByPost.get(String(row.id)) || [];
-    post.likes = reactions.length;
-    if (viewerId) post.myReaction = reactions.find((item) => item.user_id === viewerId)?.reaction || null;
-    post.comments = commentsByPost.get(String(row.id)) || 0;
+    const stats = feedStats.counts.get(String(row.id));
+    post.likes = stats?.likes || 0;
+    if (viewerId) post.myReaction = feedStats.mine.get(String(row.id)) || null;
+    post.comments = stats?.comments || 0;
     return post;
   });
 }
@@ -257,8 +285,10 @@ async function searchAll(q) {
   if (!normalized) return { services: [], posts: [] };
   const cached = searchCache.get(normalized);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached) searchCache.delete(normalized);
   const value = { services: await findServices({ search: normalized, limit: 20 }), posts: await findPosts(undefined, null, { limit: 20, search: normalized }) };
   searchCache.set(normalized, { expiresAt: Date.now() + PUBLIC_CACHE_TTL_MS, value });
+  while (searchCache.size > MAX_SEARCH_CACHE_ENTRIES) searchCache.delete(searchCache.keys().next().value);
   return value;
 }
 async function getOverview() {

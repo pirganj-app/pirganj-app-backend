@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('./supabase');
 const { listActivity, deleteActivity } = require('./activity');
@@ -5,12 +6,15 @@ const { getLoginSecurity, clearDeviceLock } = require('./auth');
 const { notifyAllUsers, createNotification } = require('./notifications');
 const { getUsersByIds } = require('./auth');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'local-development-only-change-me';
-const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'shuaib@Admin103599@#hack';
+const JWT_SECRET = process.env.JWT_SECRET || '';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
 
-function adminLogin(username, password) {
-  if (String(username || '') !== ADMIN_USERNAME || String(password || '') !== ADMIN_PASSWORD) {
+async function adminLogin(username, password) {
+  const validPassword = ADMIN_PASSWORD_HASH
+    ? await bcrypt.compare(String(password || ''), ADMIN_PASSWORD_HASH)
+    : false;
+  if (!ADMIN_USERNAME || String(username || '') !== ADMIN_USERNAME || !validPassword) {
     const error = new Error('এডমিন username অথবা password সঠিক নয়');
     error.status = 401;
     throw error;

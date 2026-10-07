@@ -45,17 +45,14 @@ const enrichReactions = async (reactions) => {
     return { ...item, userName: user?.name || id, userAvatarUrl: toPublicUrl(user?.avatar_url || null), userVerified: user?.is_verified === true };
   });
 };
-const broadcastNewContent = async ({ actorId, type, title, body, entityType, entityId }) => {
+const broadcastNewContent = ({ actorId, type, title, body, entityType, entityId }) => {
   if (!['post', 'blood-request', 'notice', 'lost-found'].includes(entityType)) return 0;
-  try {
-    // Persist in-app notifications before returning the create response. Push
-    // delivery remains detached inside notifyAllUsers, so FCM cannot slow writes.
-    return await notifyAllUsers({ actorId, type, title, body, entityType, entityId });
-  } catch (error) {
-    // Content creation must not fail because notification delivery is degraded.
-    console.error('Notification fan-out failed:', error.message);
-    return 0;
-  }
+  // Content creation must not wait for one database insert per recipient.
+  setImmediate(() => {
+    void notifyAllUsers({ actorId, type, title, body, entityType, entityId })
+      .catch((error) => console.error('Notification fan-out failed:', error.message));
+  });
+  return 0;
 };
 
 router.get('/health', (_req, res) => send(res, { status: 'ok', service: 'pirganj-api', apiVersion: '1.0' }));
@@ -143,7 +140,7 @@ router.get('/search', ...privateRoute(async (req, res) => send(res, await search
 router.get('/admin/summary', authenticateAdmin, asyncRoute(async (_req, res) => send(res, await getAdminSummary())));
 
 router.post('/admin/login', asyncRoute(async (req, res) => {
-  const result = adminLogin(req.body?.username, req.body?.password);
+  const result = await adminLogin(req.body?.username, req.body?.password);
   void logActivity({ action: 'admin_login', method: req.method, path: req.path, status: 200, ip: req.ip, userAgent: req.get('user-agent') });
   return send(res, result);
 }));
