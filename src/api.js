@@ -145,6 +145,64 @@ router.post('/admin/login', asyncRoute(async (req, res) => {
   return send(res, result);
 }));
 router.get('/admin/session', authenticateAdmin, (_req, res) => send(res, { authenticated: true }));
+router.get('/admin/app-open-messages', authenticateAdmin, asyncRoute(async (_req, res) => {
+  const db = getSupabase();
+  if (!db) return send(res, { message: 'Database is not configured' }, 503);
+  const { data, error } = await db.from('apponenmsg')
+    .select('id,title,html_content,visible,created_at,updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(500);
+  if (error) throw error;
+  return send(res, data || []);
+}));
+router.post('/admin/app-open-messages', authenticateAdmin, asyncRoute(async (req, res) => {
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const htmlContent = typeof req.body?.html_content === 'string' ? req.body.html_content : '';
+  if (!title || !htmlContent.trim() || typeof req.body?.visible !== 'boolean') {
+    return send(res, { message: 'Title, HTML content, and visibility are required' }, 400);
+  }
+  if (title.length > 200 || htmlContent.length > 400000) {
+    return send(res, { message: 'Title or HTML content is too long' }, 400);
+  }
+  const db = getSupabase();
+  if (!db) return send(res, { message: 'Database is not configured' }, 503);
+  const { data, error } = await db.from('apponenmsg')
+    .insert({ title, html_content: htmlContent, visible: req.body.visible })
+    .select('id,title,html_content,visible,created_at,updated_at')
+    .single();
+  if (error) throw error;
+  return send(res, data, 201);
+}));
+router.put('/admin/app-open-messages/:id', authenticateAdmin, asyncRoute(async (req, res) => {
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const htmlContent = typeof req.body?.html_content === 'string' ? req.body.html_content : '';
+  if (!title || !htmlContent.trim() || typeof req.body?.visible !== 'boolean') {
+    return send(res, { message: 'Title, HTML content, and visibility are required' }, 400);
+  }
+  if (title.length > 200 || htmlContent.length > 400000) {
+    return send(res, { message: 'Title or HTML content is too long' }, 400);
+  }
+  const db = getSupabase();
+  if (!db) return send(res, { message: 'Database is not configured' }, 503);
+  const { data, error } = await db.from('apponenmsg')
+    .update({ title, html_content: htmlContent, visible: req.body.visible })
+    .eq('id', req.params.id)
+    .select('id,title,html_content,visible,created_at,updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return data ? send(res, data) : send(res, { message: 'App-open message not found' }, 404);
+}));
+router.delete('/admin/app-open-messages/:id', authenticateAdmin, asyncRoute(async (req, res) => {
+  const db = getSupabase();
+  if (!db) return send(res, { message: 'Database is not configured' }, 503);
+  const { data, error } = await db.from('apponenmsg')
+    .delete()
+    .eq('id', req.params.id)
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  return data ? send(res, { deleted: true, id: data.id }) : send(res, { message: 'App-open message not found' }, 404);
+}));
   router.get('/admin/users', authenticateAdmin, asyncRoute(async (req, res) => send(res, await listUsers({ limit: req.query.limit, offset: req.query.offset, name: req.query.name, email: req.query.email, phone: req.query.phone }))));
   router.put('/admin/users/:id/block', authenticateAdmin, asyncRoute(async (req, res) => send(res, await setUserBlocked(req.params.id, req.body?.blocked === true))));
   router.put('/admin/users/:id/verify', authenticateAdmin, asyncRoute(async (req, res) => send(res, await setUserVerified(req.params.id, req.body?.verified === true))));

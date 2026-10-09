@@ -3,8 +3,10 @@ let token = localStorage.getItem('pirganj_admin_token');
 let selectedUser = null;
 let users = [];
 let activity = [];
+let appOpenMessages = [];
+let editingAppOpenMessageId = null;
 const SERVICE_NAMES = ['হাসপাতাল', 'ক্লিনিক', 'ফার্মেসি', 'রেস্টুরেন্ট', 'হোটেল', 'সরকারি অফিস', 'অ্যাম্বুলেন্স', 'গাড়ি ভাড়া', 'স্কুল ও কলেজ', 'ডাক্তার', 'রক্ত', 'রক্তের অনুরোধ', 'নোটিশ', 'চাকরির খবর', 'হারানো/পাওয়া'];
-const tabTitles = { dashboard: 'Dashboard', users: 'Users', failed: 'Failed Login Devices', notifications: 'Notifications', views: 'View Analytics', activity: 'Page & Login Activity' };
+const tabTitles = { dashboard: 'Dashboard', users: 'Users', failed: 'Failed Login Devices', notifications: 'Notifications', appopenmsg: 'App Open Message', views: 'View Analytics', activity: 'Page & Login Activity' };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const dateText = (value) => value ? new Date(value).toLocaleString() : '—';
 const eventText = (event) => ({ successfully_login: 'SUCCESSFULLY LOGIN', logout: 'LOGOUT' }[event] || event || '—');
@@ -34,7 +36,80 @@ async function loadActivity() { try { const selected = selectedUser ? `&userId=$
 async function loadAnalytics() { try { renderAnalytics(await api(`/analytics?period=${period('#analyticsPeriod')}`)); } catch (error) { show(error.message); } }
 async function loadFailed() { try { const rows = await api('/devices?limit=500'); $('#failedBody').innerHTML = rows.map((row) => { const locked = row.locked || (row.locked_until && new Date(row.locked_until) > new Date()); const key = row.id || row.deviceId; return `<tr><td class="cu">${escapeHtml(row.name || 'অজানা')}</td><td class="cm">${escapeHtml(row.email || '—')}</td><td class="cm">${escapeHtml(row.phone || '—')}</td><td class="cm device-id">${escapeHtml(row.device_id || row.deviceId || '—')}</td><td class="cm">${escapeHtml(row.ip_address || row.ip || 'অজানা')}</td><td class="cm">${Number(row.total_failed_attempts || row.failed_attempts || row.attempts || 0)}</td><td class="cm">${escapeHtml(dateText(row.last_attempt_at))}</td><td><span class="bg ${locked ? 'bg-bl' : 'bg-ac'}">${locked ? 'Locked' : 'Review'}</span></td><td><button class="table-btn" data-unblock="${escapeHtml(key)}">Unblock</button></td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">কোনো failed login data নেই</td></tr>'; document.querySelectorAll('[data-unblock]').forEach((button) => button.onclick = async () => { try { await api(`/devices/${encodeURIComponent(button.dataset.unblock)}/unblock`, { method: 'PUT' }); show('Device unlock হয়েছে'); await loadFailed(); } catch (error) { show(error.message); } }); } catch (error) { show(error.message); } }
 async function deleteActivityFor(periodValue, label) { if (!window.confirm(`${label} activity data delete করবেন?`)) return; try { const selected = selectedUser ? `&userId=${encodeURIComponent(selectedUser)}` : ''; const result = await api(`/activity?period=${periodValue}${selected}`, { method: 'DELETE' }); show(`${result.deleted || 0}টি activity delete হয়েছে`); await Promise.all([loadActivity(), loadAnalytics()]); } catch (error) { show(error.message); } }
-function switchTab(tab) { document.querySelectorAll('.adm-nav button[data-tab]').forEach((button) => button.classList.toggle('on', button.dataset.tab === tab)); document.querySelectorAll('.tp').forEach((panel) => panel.classList.toggle('on', panel.id === `t-${tab}`)); $('#adm-title').textContent = tabTitles[tab]; $('#adm-side').classList.remove('open'); $('#adm-ov').classList.remove('on'); if (tab === 'failed') loadFailed(); if (tab === 'dashboard') loadAnalytics(); }
+async function loadAppOpenMessages() {
+  try {
+    appOpenMessages = await api('/app-open-messages');
+    const body = $('#appOpenMessageRows');
+    body.innerHTML = appOpenMessages.map((item) => `<tr><td class="cu">${escapeHtml(item.title)}</td><td><span class="bg ${item.visible ? 'bg-ok' : 'bg-bl'}">${item.visible ? 'Visible' : 'Hidden'}</span></td><td class="cm">${escapeHtml(dateText(item.updated_at))}</td><td><div class="inline-actions"><button class="table-btn" data-appopen-action="preview" data-id="${escapeHtml(item.id)}">Visit / Preview</button><button class="table-btn" data-appopen-action="edit" data-id="${escapeHtml(item.id)}">Edit</button><button class="table-btn danger" data-appopen-action="delete" data-id="${escapeHtml(item.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="4" class="empty">কোনো app-open message নেই</td></tr>';
+  } catch (error) {
+    show(error.message);
+    $('#appOpenMessageRows').innerHTML = '<tr><td colspan="4" class="empty">বার্তাগুলো লোড করা যায়নি</td></tr>';
+  }
+}
+function showAppOpenMessageEditor(item = null) {
+  editingAppOpenMessageId = item?.id || null;
+  $('#appOpenMessageEditorTitle').textContent = item ? 'App Open Message সম্পাদনা' : 'নতুন App Open Message';
+  $('#appOpenMessageTitle').value = item?.title || '';
+  $('#appOpenMessageHtml').value = item?.html_content || '';
+  $('#appOpenMessageVisible').checked = item ? item.visible === true : true;
+  $('#appOpenMessageEditor').classList.remove('hidden');
+  $('#appOpenMessageEditor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function closeAppOpenMessagePreview() {
+  $('#appOpenMessagePreview').classList.add('hidden');
+  $('#appOpenMessagePreviewFrame').srcdoc = '';
+}
+$('#appOpenMessageRows').addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-appopen-action]');
+  if (!button) return;
+  const item = appOpenMessages.find((row) => String(row.id) === button.dataset.id);
+  if (!item) return;
+  if (button.dataset.appopenAction === 'preview') {
+    $('#appOpenMessagePreviewTitle').textContent = item.title || 'Preview';
+    const frame = $('#appOpenMessagePreviewFrame');
+    frame.setAttribute('sandbox', '');
+    frame.srcdoc = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff">${item.html_content || ''}</body></html>`;
+    $('#appOpenMessagePreview').classList.remove('hidden');
+  } else if (button.dataset.appopenAction === 'edit') {
+    showAppOpenMessageEditor(item);
+  } else if (button.dataset.appopenAction === 'delete') {
+    if (!window.confirm(`“${item.title}” permanently delete করবেন?`)) return;
+    try {
+      await api(`/app-open-messages/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      show('App Open Message delete হয়েছে');
+      await loadAppOpenMessages();
+    } catch (error) { show(error.message); }
+  }
+});
+$('#newAppOpenMessage').onclick = () => showAppOpenMessageEditor();
+$('#cancelAppOpenMessage').onclick = () => {
+  $('#appOpenMessageEditor').classList.add('hidden');
+  $('#appOpenMessageForm').reset();
+  editingAppOpenMessageId = null;
+};
+$('#appOpenMessageForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const title = $('#appOpenMessageTitle').value.trim();
+  const htmlContent = $('#appOpenMessageHtml').value;
+  if (!title || !htmlContent.trim()) return show('শিরোনাম ও HTML content লিখুন');
+  const payload = { title, html_content: htmlContent, visible: $('#appOpenMessageVisible').checked };
+  const id = editingAppOpenMessageId;
+  try {
+    await api(id ? `/app-open-messages/${encodeURIComponent(id)}` : '/app-open-messages', {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(payload),
+    });
+    show(id ? 'App Open Message আপডেট হয়েছে' : 'App Open Message যোগ হয়েছে');
+    $('#appOpenMessageEditor').classList.add('hidden');
+    $('#appOpenMessageForm').reset();
+    editingAppOpenMessageId = null;
+    await loadAppOpenMessages();
+  } catch (error) { show(error.message); }
+};
+$('#closeAppOpenMessagePreview').onclick = closeAppOpenMessagePreview;
+$('#appOpenMessagePreview').onclick = (event) => {
+  if (event.target === $('#appOpenMessagePreview')) closeAppOpenMessagePreview();
+};
+function switchTab(tab) { document.querySelectorAll('.adm-nav button[data-tab]').forEach((button) => button.classList.toggle('on', button.dataset.tab === tab)); document.querySelectorAll('.tp').forEach((panel) => panel.classList.toggle('on', panel.id === `t-${tab}`)); $('#adm-title').textContent = tabTitles[tab]; $('#adm-side').classList.remove('open'); $('#adm-ov').classList.remove('on'); if (tab === 'failed') loadFailed(); if (tab === 'dashboard') loadAnalytics(); if (tab === 'appopenmsg') loadAppOpenMessages(); }
 async function enter() { if (!token) return; try { await api('/session'); $('#loginScreen').classList.add('hidden'); $('#app').classList.remove('hidden'); await Promise.all([loadUsers(), loadActivity(), loadAnalytics()]); } catch (_) { token = null; localStorage.removeItem('pirganj_admin_token'); $('#loginScreen').classList.remove('hidden'); } }
 $('#loginForm').onsubmit = async (event) => { event.preventDefault(); try { const result = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: $('#username').value, password: $('#password').value }) }).then((response) => response.json()); if (!result.success) throw Error(result.data?.message || 'Login হয়নি'); token = result.data.token; localStorage.setItem('pirganj_admin_token', token); await enter(); } catch (error) { $('#loginError').textContent = error.message; } };
 $('#logout').onclick = () => { token = null; localStorage.removeItem('pirganj_admin_token'); location.reload(); };
