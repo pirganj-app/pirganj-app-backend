@@ -63,6 +63,12 @@ app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use('/api/auth', authLimiter);
 app.use('/api/admin/login', adminAuthLimiter);
 app.use('/api', apiLimiter, api);
+app.use('/images', express.static(path.join(__dirname, '..', 'images'), {
+  maxAge: '1d',
+  etag: true,
+  index: false,
+  dotfiles: 'deny',
+}));
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin', 'index.html')));
 app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 app.get('/version', async (_req, res, next) => {
