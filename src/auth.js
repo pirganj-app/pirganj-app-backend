@@ -138,6 +138,7 @@ async function loginWithGoogle(accessToken) {
   }
   const existing = await db.from('users').select('*').eq('email', email).maybeSingle();
   if (existing.error) throw existing.error;
+  if (existing.data?.is_blocked === true) { const error = new Error('এই account admin দ্বারা blocked আছে'); error.status = 403; throw error; }
   if (existing.data) return { token: signUser(existing.data), user: publicUser(existing.data) };
   const error = new Error('Google email is not registered');
   error.status = 401;
@@ -243,11 +244,37 @@ async function deleteUser(id) {
   return Boolean(data?.length);
 }
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return res.status(401).json({ success: false, data: { message: 'Login required' } });
-  try { req.user = jwt.verify(token, JWT_SECRET); return next(); } catch (_error) { return res.status(401).json({ success: false, data: { message: 'Invalid or expired login session' } }); }
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch (_error) {
+    return res.status(401).json({ success: false, data: { message: 'Invalid or expired login session' } });
+  }
+  try {
+    const db = getSupabase();
+    const result = db
+      ? await db.from('users').select('id,is_blocked').eq('id', payload.sub).maybeSingle()
+      : { data: [...fallbackUsers.values()].find((user) => String(user.id) === String(payload.sub)) || null, error: null };
+    if (result.error) throw result.error;
+    if (!result.data || result.data.is_blocked === true) {
+      const blocked = result.data?.is_blocked === true;
+      return res.status(401).json({
+        success: false,
+        data: {
+          message: blocked ? 'এই account admin দ্বারা blocked আছে' : 'Login session is no longer valid',
+          code: blocked ? 'USER_BLOCKED' : 'SESSION_REVOKED',
+        },
+      });
+    }
+    req.user = payload;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
 }
 
 function optionalAuthenticate(req, _res, next) {
